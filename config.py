@@ -17,6 +17,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 SEMBOL     = os.getenv('SEMBOL', 'ETHUSDT')
 TIMEFRAME  = os.getenv('TIMEFRAME', '1h')
 POZISYON_USDT = float(os.getenv('POZISYON_USDT', '100'))  # Her işlemde kaç USDT
+KALDIRAC     = int(os.getenv('KALDIRAC', '3'))                  # Kaldıraç oranı
 
 # ─── PMAX PARAMETRELERİ (TradingView değerleri)
 ATR_PERIOD   = int(os.getenv('ATR_PERIOD', '18'))

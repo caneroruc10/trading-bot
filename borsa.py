@@ -173,9 +173,20 @@ def pozisyon_miktari_hesapla(client, usdt_miktar, fiyat, sembol=None) -> float:
 def emir_gonder(client, sinyal: dict, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
     if cfg.TEST_MODU:
-        log.info(f"[TEST] {sinyal['yon']} {sembol} @ {sinyal['fiyat']:.2f}")
+        log.info(f"[TEST] {sinyal['yon']} {sembol} @ {sinyal['fiyat']:.2f} | Kaldirac:{cfg.KALDIRAC}x")
         return True
     try:
+        # Kaldirac ayarla
+        try:
+            client.futures_change_leverage(symbol=sembol, leverage=cfg.KALDIRAC)
+            log.info(f"Kaldirac: {cfg.KALDIRAC}x")
+        except BinanceAPIException as e:
+            log.warning(f"Kaldirac uyari: {e}")
+        # Margin tipi ISOLATED
+        try:
+            client.futures_change_margin_type(symbol=sembol, marginType='ISOLATED')
+        except BinanceAPIException:
+            pass
         miktar  = pozisyon_miktari_hesapla(client, cfg.POZISYON_USDT, sinyal['fiyat'])
         side    = 'BUY'  if sinyal['yon'] == 'LONG'  else 'SELL'
         sl_side = 'SELL' if sinyal['yon'] == 'LONG'  else 'BUY'
