@@ -1,7 +1,7 @@
 """
 Borsa Modülü — Binance Futures
 ================================
-- Veri çekme
+- Veri çekme (public API — key gerekmez)
 - Pozisyon sorgulama
 - Emir gönderme
 """
@@ -9,11 +9,20 @@ Borsa Modülü — Binance Futures
 import logging
 import pandas as pd
 import numpy as np
+import urllib.request
+import ssl
+import json
+import time
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import config as cfg
 
 log = logging.getLogger(__name__)
+
+# SSL context
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
 
 # ─────────────────────────────────────────────────────────────
 # BAĞLANTI
@@ -23,31 +32,29 @@ def client_olustur():
     return Client(cfg.BINANCE_API_KEY, cfg.BINANCE_API_SECRET)
 
 # ─────────────────────────────────────────────────────────────
-# VERİ ÇEKME
+# VERİ ÇEKME — Public API (key gerekmez)
 # ─────────────────────────────────────────────────────────────
 
-def ohlcv_cek(client, sembol=None, timeframe=None, limit=500) -> pd.DataFrame:
-    """Binance'den OHLCV verisi çek"""
+def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=500) -> pd.DataFrame:
+    """
+    Binance public API'den OHLCV verisi çek.
+    API key gerektirmez — coğrafi kısıtlama yok.
+    """
     sembol    = sembol    or cfg.SEMBOL
     timeframe = timeframe or cfg.TIMEFRAME
 
-    interval_map = {
-        '1m':  Client.KLINE_INTERVAL_1MINUTE,
-        '5m':  Client.KLINE_INTERVAL_5MINUTE,
-        '15m': Client.KLINE_INTERVAL_15MINUTE,
-        '30m': Client.KLINE_INTERVAL_30MINUTE,
-        '1h':  Client.KLINE_INTERVAL_1HOUR,
-        '4h':  Client.KLINE_INTERVAL_4HOUR,
-        '1d':  Client.KLINE_INTERVAL_1DAY,
-    }
-    interval = interval_map.get(timeframe, Client.KLINE_INTERVAL_1HOUR)
+    # Futures public endpoint
+    url = (f"https://fapi.binance.com/fapi/v1/klines"
+           f"?symbol={sembol}&interval={timeframe}&limit={limit}")
 
     try:
-        klines = client.futures_klines(
-            symbol=sembol,
-            interval=interval,
-            limit=limit
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0'}
         )
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+            klines = json.loads(r.read())
+
         df = pd.DataFrame(klines, columns=[
             'timestamp','open','high','low','close','volume',
             'close_time','quote_vol','trades','tb_base','tb_quote','ignore'
@@ -57,12 +64,38 @@ def ohlcv_cek(client, sembol=None, timeframe=None, limit=500) -> pd.DataFrame:
         for col in ['open','high','low','close','volume']:
             df[col] = df[col].astype(float)
         df = df[['open','high','low','close','volume']]
-        # Son bar henüz kapanmamış olabilir — çıkar
+        # Son bar henüz kapanmamış — çıkar
         df = df.iloc[:-1]
+
         log.info(f"Veri çekildi: {len(df)} bar | {df.index[0]} → {df.index[-1]}")
         return df
-    except BinanceAPIException as e:
-        log.error(f"Binance API hatası (veri): {e}")
+
+    except Exception as e:
+        log.error(f"Veri çekme hatası: {e}")
+        # Spot API'yi dene (yedek)
+        return _ohlcv_spot(sembol, timeframe, limit)
+
+def _ohlcv_spot(sembol, timeframe, limit):
+    """Yedek: Spot API"""
+    url = (f"https://api.binance.com/api/v3/klines"
+           f"?symbol={sembol}&interval={timeframe}&limit={limit}")
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+            klines = json.loads(r.read())
+        df = pd.DataFrame(klines, columns=[
+            'timestamp','open','high','low','close','volume',
+            'close_time','quote_vol','trades','tb_base','tb_quote','ignore'
+        ])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df = df.set_index('timestamp')
+        for col in ['open','high','low','close','volume']:
+            df[col] = df[col].astype(float)
+        df = df[['open','high','low','close','volume']].iloc[:-1]
+        log.info(f"Spot veri çekildi: {len(df)} bar")
+        return df
+    except Exception as e:
+        log.error(f"Spot veri hatası: {e}")
         raise
 
 # ─────────────────────────────────────────────────────────────
@@ -70,7 +103,6 @@ def ohlcv_cek(client, sembol=None, timeframe=None, limit=500) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────
 
 def acik_pozisyon_var_mi(client, sembol=None) -> bool:
-    """Açık pozisyon var mı?"""
     sembol = sembol or cfg.SEMBOL
     try:
         pozisyonlar = client.futures_position_information(symbol=sembol)
@@ -81,10 +113,9 @@ def acik_pozisyon_var_mi(client, sembol=None) -> bool:
         return False
     except BinanceAPIException as e:
         log.error(f"Pozisyon sorgu hatası: {e}")
-        return True  # Hata durumunda güvenli taraf
+        return True
 
 def pozisyon_bilgisi(client, sembol=None) -> dict | None:
-    """Mevcut pozisyon detayı"""
     sembol = sembol or cfg.SEMBOL
     try:
         pozisyonlar = client.futures_position_information(symbol=sembol)
@@ -92,10 +123,10 @@ def pozisyon_bilgisi(client, sembol=None) -> dict | None:
             amt = float(poz['positionAmt'])
             if amt != 0:
                 return {
-                    'yon':          'LONG' if amt > 0 else 'SHORT',
-                    'miktar':       abs(amt),
-                    'giris_fiyat':  float(poz['entryPrice']),
-                    'kar_zarar':    float(poz['unrealizedProfit']),
+                    'yon':         'LONG' if amt > 0 else 'SHORT',
+                    'miktar':      abs(amt),
+                    'giris_fiyat': float(poz['entryPrice']),
+                    'kar_zarar':   float(poz['unrealizedProfit']),
                 }
         return None
     except BinanceAPIException as e:
@@ -107,7 +138,6 @@ def pozisyon_bilgisi(client, sembol=None) -> dict | None:
 # ─────────────────────────────────────────────────────────────
 
 def pozisyon_miktari_hesapla(client, usdt_miktar, fiyat, sembol=None) -> float:
-    """USDT miktarını coin miktarına çevir"""
     sembol = sembol or cfg.SEMBOL
     try:
         info = client.futures_exchange_info()
@@ -124,10 +154,6 @@ def pozisyon_miktari_hesapla(client, usdt_miktar, fiyat, sembol=None) -> float:
     return round(usdt_miktar / fiyat, 3)
 
 def emir_gonder(client, sinyal: dict, sembol=None) -> bool:
-    """
-    Market emir + Stop-Loss gönder.
-    sinyal: strateji.sinyal_uret() çıktısı
-    """
     sembol = sembol or cfg.SEMBOL
     yon    = sinyal['yon']
     fiyat  = sinyal['fiyat']
@@ -139,45 +165,30 @@ def emir_gonder(client, sinyal: dict, sembol=None) -> bool:
         return True
 
     try:
-        # Miktar hesapla
         miktar = pozisyon_miktari_hesapla(client, cfg.POZISYON_USDT, fiyat, sembol)
         if miktar <= 0:
             log.error("Miktar hesaplanamadı")
             return False
 
-        side      = 'BUY'  if yon == 'LONG'  else 'SELL'
-        sl_side   = 'SELL' if yon == 'LONG'  else 'BUY'
+        side    = 'BUY'  if yon == 'LONG'  else 'SELL'
+        sl_side = 'SELL' if yon == 'LONG'  else 'BUY'
 
-        log.info(f"Emir gönderiliyor: {side} {miktar} {sembol} @ MARKET")
-
-        # 1. Market emir
+        # Market emir
         emir = client.futures_create_order(
-            symbol   = sembol,
-            side     = side,
-            type     = 'MARKET',
-            quantity = miktar,
-        )
+            symbol=sembol, side=side, type='MARKET', quantity=miktar)
         log.info(f"Market emir: {emir['orderId']} ✅")
 
-        # 2. Stop-Loss
-        sl_emir = client.futures_create_order(
-            symbol        = sembol,
-            side          = sl_side,
-            type          = 'STOP_MARKET',
-            stopPrice     = sl,
-            closePosition = True,
-        )
+        # Stop-Loss
+        client.futures_create_order(
+            symbol=sembol, side=sl_side, type='STOP_MARKET',
+            stopPrice=sl, closePosition=True)
         log.info(f"Stop-Loss: {sl} ✅")
 
-        # 3. Take-Profit (varsa)
+        # Take-Profit
         if tp:
-            tp_emir = client.futures_create_order(
-                symbol        = sembol,
-                side          = sl_side,
-                type          = 'TAKE_PROFIT_MARKET',
-                stopPrice     = tp,
-                closePosition = True,
-            )
+            client.futures_create_order(
+                symbol=sembol, side=sl_side, type='TAKE_PROFIT_MARKET',
+                stopPrice=tp, closePosition=True)
             log.info(f"Take-Profit: {tp} ✅")
 
         return True
@@ -187,7 +198,6 @@ def emir_gonder(client, sinyal: dict, sembol=None) -> bool:
         return False
 
 def pozisyon_kapat(client, sembol=None) -> bool:
-    """Açık pozisyonu kapat"""
     sembol = sembol or cfg.SEMBOL
     if cfg.TEST_MODU:
         log.info("[TEST MODU] Pozisyon kapatılmadı")
@@ -195,17 +205,12 @@ def pozisyon_kapat(client, sembol=None) -> bool:
     try:
         poz = pozisyon_bilgisi(client, sembol)
         if not poz:
-            log.info("Kapatılacak pozisyon yok")
             return True
         side = 'SELL' if poz['yon'] == 'LONG' else 'BUY'
         client.futures_create_order(
-            symbol        = sembol,
-            side          = side,
-            type          = 'MARKET',
-            quantity      = poz['miktar'],
-            reduceOnly    = True,
-        )
-        log.info(f"Pozisyon kapatıldı ✅")
+            symbol=sembol, side=side, type='MARKET',
+            quantity=poz['miktar'], reduceOnly=True)
+        log.info("Pozisyon kapatıldı ✅")
         return True
     except BinanceAPIException as e:
         log.error(f"Pozisyon kapatma hatası: {e}")
