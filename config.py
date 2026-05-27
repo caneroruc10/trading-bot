@@ -5,9 +5,10 @@ Tüm parametreler burada — Railway'de environment variable olarak set edilir.
 """
 import os
 
-# ─── BORSA
-BINANCE_API_KEY    = os.getenv('BINANCE_API_KEY', '')
-BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
+# ─── BORSA — Bitget
+BITGET_API_KEY    = os.getenv('BITGET_API_KEY', '')
+BITGET_API_SECRET = os.getenv('BITGET_API_SECRET', '')
+BITGET_PASSPHRASE = os.getenv('BITGET_PASSPHRASE', '')
 
 # ─── TELEGRAM
 TELEGRAM_TOKEN   = os.getenv('TELEGRAM_TOKEN', '')
