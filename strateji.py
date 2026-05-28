@@ -226,23 +226,32 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
         log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
         return None
 
-    # ── PMAX cross kontrolü — SINYAL_GECIKME bar öncede cross var mı?
-    gecikme = cfg.SINYAL_GECIKME
-    sinyal_bari = n - 1 - gecikme  # gecikme bar önceki bar
+    # ── PMAX cross kontrolü — son 3 bar içinde cross var mı?
+    # (Saatlik kontrol anına göre cross biraz önce oluşmuş olabilir)
+    TARAMA_PENCERE = 3
+    yon = None
+    giris_fiyat = None
+    giris_atr   = None
 
-    if sinyal_bari < 0:
-        return None
+    for offset in range(TARAMA_PENCERE):
+        bari = n - 1 - offset
+        if bari < 0:
+            continue
+        if bull_cross[bari]:
+            yon         = 'LONG'
+            giris_fiyat = close[bari]
+            giris_atr   = atr[bari]
+            log.info(f"Bull cross bulundu: {offset} bar önce")
+            break
+        elif bear_cross[bari]:
+            yon         = 'SHORT'
+            giris_fiyat = close[bari]
+            giris_atr   = atr[bari]
+            log.info(f"Bear cross bulundu: {offset} bar önce")
+            break
 
-    if bull_cross[sinyal_bari]:
-        yon = 'LONG'
-        giris_fiyat = close[sinyal_bari]
-        giris_atr   = atr[sinyal_bari]
-    elif bear_cross[sinyal_bari]:
-        yon = 'SHORT'
-        giris_fiyat = close[sinyal_bari]
-        giris_atr   = atr[sinyal_bari]
-    else:
-        log.info(f"Cross yok (son {gecikme} bar) — sinyal yok")
+    if yon is None:
+        log.info("Cross yok (son 3 bar) — sinyal yok")
         return None
 
     # ── Rejim filtresi
