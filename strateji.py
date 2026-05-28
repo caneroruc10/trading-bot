@@ -226,32 +226,21 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
         log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
         return None
 
-    # ── PMAX cross kontrolü — son 3 bar içinde cross var mı?
-    # (Saatlik kontrol anına göre cross biraz önce oluşmuş olabilir)
-    TARAMA_PENCERE = 3
-    yon = None
-    giris_fiyat = None
-    giris_atr   = None
-
-    for offset in range(TARAMA_PENCERE):
-        bari = n - 1 - offset
-        if bari < 0:
-            continue
-        if bull_cross[bari]:
-            yon         = 'LONG'
-            giris_fiyat = close[bari]
-            giris_atr   = atr[bari]
-            log.info(f"Bull cross bulundu: {offset} bar önce")
-            break
-        elif bear_cross[bari]:
-            yon         = 'SHORT'
-            giris_fiyat = close[bari]
-            giris_atr   = atr[bari]
-            log.info(f"Bear cross bulundu: {offset} bar önce")
-            break
-
-    if yon is None:
-        log.info("Cross yok (son 3 bar) — sinyal yok")
+    # ── PMAX yön kontrolü — şu an yön ne, önceki bardan farklı mı?
+    # Yön değişimi = bull_cross veya bear_cross
+    # Son barda yön değişimi varsa sinyal ver
+    if pmax_bull[-1] and not pmax_bull[-2]:
+        yon         = 'LONG'
+        giris_fiyat = close[-1]
+        giris_atr   = atr[-1]
+        log.info("PMAX yön değişimi: BEAR → BULL")
+    elif not pmax_bull[-1] and pmax_bull[-2]:
+        yon         = 'SHORT'
+        giris_fiyat = close[-1]
+        giris_atr   = atr[-1]
+        log.info("PMAX yön değişimi: BULL → BEAR")
+    else:
+        log.info(f"PMAX yön değişimi yok ({'BULL' if pmax_bull[-1] else 'BEAR'}) — sinyal yok")
         return None
 
     # ── Rejim filtresi
