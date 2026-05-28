@@ -180,15 +180,15 @@ def baslangic():
 def main():
     baslangic()
 
-    # Her saatin :05'inde sinyal kontrolü
-    schedule.every().hour.at(":05").do(kontrol_et)
+    # Her 5 dakikada bir sinyal kontrolü — cross kaçırılmasın
+    schedule.every(5).minutes.do(kontrol_et)
 
     # Her 4 saatte bir durum raporu
     for saat in ["00:05", "04:05", "08:05", "12:05", "16:05", "20:05"]:
         schedule.every().day.at(saat).do(durum_raporu)
 
     log.info("Scheduler aktif")
-    log.info("  Sinyal kontrolü: her saatin :05'i")
+    log.info("  Sinyal kontrolü: her 5 dakikada bir")
     log.info("  Durum raporu: 00:05, 04:05, 08:05, 12:05, 16:05, 20:05")
 
     while True:
