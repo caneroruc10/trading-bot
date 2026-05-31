@@ -172,7 +172,7 @@ def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
         pozlar = r.get('data', [])
         for p in pozlar:
             if float(p.get('total', 0)) > 0:
-                log.info(f"Açık pozisyon: {p['holdSide']} {p['total']} @ {p['averageOpenPrice']}")
+                log.info(f"Açık pozisyon: {p['holdSide']} {p['total']} @ {p.get('openPriceAvg', p.get('averageOpenPrice', 0))}")
                 return True
         return False
     except Exception as e:
@@ -193,7 +193,7 @@ def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
                 return {
                     'yon':         'LONG' if p['holdSide'] == 'long' else 'SHORT',
                     'miktar':      float(p['total']),
-                    'giris_fiyat': float(p['averageOpenPrice']),
+                    'giris_fiyat': float(p.get('openPriceAvg', p.get('averageOpenPrice', 0))),
                     'kar_zarar':   float(p.get('unrealizedPL', 0)),
                 }
         return None
@@ -269,18 +269,15 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         log.info(f"Market emir OK: {r['data'].get('orderId')}")
 
         # Stop-Loss
-        sl_side = 'sell' if yon == 'LONG' else 'buy'
+        holdSide = 'long' if yon == 'LONG' else 'short'
         r_sl = _post('/api/v2/mix/order/place-tpsl-order', {
             'symbol':        sembol,
             'productType':   'USDT-FUTURES',
             'marginCoin':    'USDT',
             'planType':      'loss_plan',
-            'triggerPrice':  str(sl),
+            'triggerPrice':  str(round(sl, 2)),
             'triggerType':   'mark_price',
-            'size':          str(miktar),
-            'side':          sl_side,
-            'tradeSide':     'close',
-            'holdSide':      'long' if yon == 'LONG' else 'short',
+            'holdSide':      holdSide,
         })
         if r_sl.get('code') != '00000':
             log.warning(f"SL emir uyarısı: {r_sl.get('msg')}")
@@ -294,12 +291,9 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
                 'productType':   'USDT-FUTURES',
                 'marginCoin':    'USDT',
                 'planType':      'profit_plan',
-                'triggerPrice':  str(tp),
+                'triggerPrice':  str(round(tp, 2)),
                 'triggerType':   'mark_price',
-                'size':          str(miktar),
-                'side':          sl_side,
-                'tradeSide':     'close',
-                'holdSide':      'long' if yon == 'LONG' else 'short',
+                'holdSide':      holdSide,
             })
             if r_tp.get('code') != '00000':
                 log.warning(f"TP emir uyarısı: {r_tp.get('msg')}")
