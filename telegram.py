@@ -40,7 +40,7 @@ def sinyal_bildirimi(sinyal: dict, basarili: bool) -> bool:
 
 💰 Giriş   : <code>{sinyal['fiyat']:.2f}</code>
 🛑 Stop-L  : <code>{sinyal['sl']:.2f}</code>
-🎯 Take-P  : <code>{sinyal['tp']:.2f if sinyal['tp'] else 'Kapalı'}</code>
+🎯 Take-P  : <code>{f"{sinyal['tp']:.2f}" if sinyal['tp'] else 'Kapalı'}</code>
 📊 Rejim   : {sinyal['rejim']}
 📈 Skor    : {sinyal['trend_skoru']:.1f}/100
 """
