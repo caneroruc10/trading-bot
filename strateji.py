@@ -226,22 +226,27 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
         log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
         return None
 
-    # ── PMAX yön kontrolü — şu an yön ne, önceki bardan farklı mı?
-    # Yön değişimi = bull_cross veya bear_cross
-    # Son barda yön değişimi varsa sinyal ver
-    if pmax_bull[-1] and not pmax_bull[-2]:
+    # ── PMAX + TREND SKORU SINYAL MANTIĞI
+    # Kural:
+    #   1. PMAX hangi yöndeyse o yönde pozisyon al
+    #   2. Trend skoru >= eşik olduğunda gir
+    #   3. Yön değişirse yeni yönde bekle, skor gelince gir
+    #   4. Skor düşerse sistem zaten pozisyon açmaz (çıkış borsa stop-loss ile)
+
+    if trend_skoru < cfg.SCORE_THRESH:
+        log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — bekleniyor")
+        return None
+
+    if pmax_bull[-1]:
         yon         = 'LONG'
         giris_fiyat = close[-1]
         giris_atr   = atr[-1]
-        log.info("PMAX yön değişimi: BEAR → BULL")
-    elif not pmax_bull[-1] and pmax_bull[-2]:
+        log.info(f"LONG sinyali — PMAX BULL | skor {trend_skoru:.1f}")
+    else:
         yon         = 'SHORT'
         giris_fiyat = close[-1]
         giris_atr   = atr[-1]
-        log.info("PMAX yön değişimi: BULL → BEAR")
-    else:
-        log.info(f"PMAX yön değişimi yok ({'BULL' if pmax_bull[-1] else 'BEAR'}) — sinyal yok")
-        return None
+        log.info(f"SHORT sinyali — PMAX BEAR | skor {trend_skoru:.1f}")
 
     # ── Rejim filtresi
     rejim = rejim_hesapla(close)
