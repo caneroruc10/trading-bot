@@ -253,7 +253,7 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
 
         holdSide = 'long' if yon == 'LONG' else 'short'
 
-        # Stop-Loss
+        # Stop-Loss — plan order yöntemi
         try:
             sl_body = {
                 'symbol':       sembol,
@@ -263,9 +263,13 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
                 'triggerPrice': str(round(sl, 4)),
                 'triggerType':  'mark_price',
                 'holdSide':     holdSide,
+                'size':         str(miktar),
+                'side':         'sell' if yon == 'LONG' else 'buy',
+                'orderType':    'market',
+                'tradeSide':    'close',
             }
             log.info(f"SL gönderiliyor: {sl_body}")
-            r_sl = _post('/api/v2/mix/order/place-tpsl-order', sl_body)
+            r_sl = _post('/api/v2/mix/order/place-plan-order', sl_body)
             if r_sl.get('code') != '00000':
                 log.warning(f"SL uyarısı: kod={r_sl.get('code')} msg={r_sl.get('msg')} tam={r_sl}")
             else:
@@ -273,20 +277,24 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         except Exception as e:
             log.error(f"SL exception: {e}")
 
-        # Take-Profit
+        # Take-Profit — plan order yöntemi
         if tp:
             try:
                 tp_body = {
                     'symbol':       sembol,
                     'productType':  'USDT-FUTURES',
                     'marginCoin':   'USDT',
-                    'planType':     'profit_plan',
+                    'planType':     'normal_plan',
                     'triggerPrice': str(round(tp, 4)),
                     'triggerType':  'mark_price',
                     'holdSide':     holdSide,
+                    'size':         str(miktar),
+                    'side':         'sell' if yon == 'LONG' else 'buy',
+                    'orderType':    'market',
+                    'tradeSide':    'close',
                 }
                 log.info(f"TP gönderiliyor: {tp_body}")
-                r_tp = _post('/api/v2/mix/order/place-tpsl-order', tp_body)
+                r_tp = _post('/api/v2/mix/order/place-plan-order', tp_body)
                 if r_tp.get('code') != '00000':
                     log.warning(f"TP uyarısı: kod={r_tp.get('code')} msg={r_tp.get('msg')} tam={r_tp}")
                 else:
