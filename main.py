@@ -90,7 +90,7 @@ def durum_raporu():
         else:
             poz_metin = "\n💼 Açık Pozisyon: Yok"
 
-        metin = f"""📊 <b>ETH PMAX — 4 Saatlik Durum</b>
+        metin = f"""📊 <b>PMAX — {cfg.SEMBOL} 4 Saatlik Durum</b>
 {datetime.now().strftime('%d.%m.%Y %H:%M')} UTC+3
 
 💰 Fiyat     : <code>{close[-1]:.2f}</code> USDT
@@ -164,12 +164,12 @@ def kontrol_et():
 
 def baslangic():
     log.info("═" * 50)
-    log.info("ETH PMAX BOT BAŞLATILDI")
+    log.info(f"PMAX BOT BAŞLATILDI — {cfg.SEMBOL}")
     log.info(f"Sembol: {cfg.SEMBOL} | TF: {cfg.TIMEFRAME} | Test: {cfg.TEST_MODU}")
     log.info("═" * 50)
 
     telegram.durum_bildirimi(
-        f"🤖 ETH PMAX Bot başlatıldı\n"
+        f"🤖 PMAX Bot başlatıldı — {cfg.SEMBOL}\n"
         f"{'⚠️ TEST MODU' if cfg.TEST_MODU else '🔴 CANLI MOD'}\n"
         f"Sembol: {cfg.SEMBOL} | TF: {cfg.TIMEFRAME}\n"
         f"Pozisyon: {cfg.POZISYON_USDT} USDT | Kaldıraç: {cfg.KALDIRAC}x"
