@@ -41,11 +41,27 @@ VOL_MIN = float(os.getenv('VOL_MIN', '0.3'))
 VOL_MAX = float(os.getenv('VOL_MAX', '1.5'))
 
 # ─── REJİM FİLTRESİ — elenen kombinasyonlar
-# Format: "Sakin:LONG,Gecis:SHORT"
-ELENEN_KOMBINASYONLAR = [
-    ('Sakin', 'LONG'),
-    ('Geçiş', 'SHORT'),
-]
+# Railway Variable: ELENEN_KOMBINASYONLAR = "Gecis+long,Gecis+short"
+def _parse_elenenler(env_str):
+    """'Gecis+long,Sakin+short' → {('Geçiş','long'), ('Sakin','short')}"""
+    if not env_str:
+        return set()
+    sonuc = set()
+    for kombinasyon in env_str.split(','):
+        kombinasyon = kombinasyon.strip()
+        if '+' in kombinasyon:
+            parcalar = kombinasyon.split('+')
+            rejim = parcalar[0].strip()
+            yon   = parcalar[1].strip().lower()
+            # Türkçe karakter normalizasyonu
+            rejim = rejim.replace('Gecis', 'Geçiş').replace('Gecış', 'Geçiş')
+            sonuc.add((rejim, yon))
+    return sonuc
+
+_env_elenenler = os.getenv('ELENEN_KOMBINASYONLAR', '')
+ELENEN_KOMBINASYONLAR = _parse_elenenler(_env_elenenler) if _env_elenenler else {
+    ('Sakin', 'long'), ('Geçiş', 'short')  # ETH varsayılan
+}
 
 # ─── PMAX GECİKME (Matriks = 3 bar gecikme)
 SINYAL_GECIKME = int(os.getenv('SINYAL_GECIKME', '3'))

@@ -250,7 +250,7 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
 
     # ── Rejim filtresi
     rejim = rejim_hesapla(close)
-    if (rejim, yon) in cfg.ELENEN_KOMBINASYONLAR:
+    if (rejim, yon.lower()) in cfg.ELENEN_KOMBINASYONLAR:
         log.info(f"Rejim filtresi: {rejim}+{yon} → elenmiş kombinasyon")
         return None
 
