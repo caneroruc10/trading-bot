@@ -26,10 +26,6 @@ ctx.verify_mode = ssl.CERT_NONE
 
 BITGET_BASE = "https://api.bitget.com"
 
-# ─────────────────────────────────────────────────────────────
-# İMZA
-# ─────────────────────────────────────────────────────────────
-
 def _timestamp():
     return str(int(datetime.now(timezone.utc).timestamp() * 1000))
 
@@ -77,12 +73,7 @@ def _post(path, body: dict):
     with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
         return json.loads(r.read())
 
-# ─────────────────────────────────────────────────────────────
-# VERİ ÇEKME — Public API
-# ─────────────────────────────────────────────────────────────
-
 def _bitget_veri(sembol, timeframe, limit):
-    """Bitget public kline verisi"""
     tf_map = {
         '1m':'1m', '3m':'3m', '5m':'5m', '15m':'15m',
         '30m':'30m', '1h':'1H', '2h':'2H', '4h':'4H',
@@ -114,7 +105,6 @@ def _bitget_veri(sembol, timeframe, limit):
     return df[['open','high','low','close','volume']].iloc[:-1]
 
 def _kraken_veri(sembol, timeframe, limit):
-    """Yedek: Kraken"""
     tf_map = {'1m':1,'5m':5,'15m':15,'30m':30,'1h':60,'4h':240,'1d':1440}
     interval = tf_map.get(timeframe, 60)
     kraken_sembol = 'XETHZUSD' if 'ETH' in sembol else 'XXBTZUSD'
@@ -151,10 +141,6 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=500) -> pd.DataFra
             son_hata = e
             time.sleep(1)
     raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
-
-# ─────────────────────────────────────────────────────────────
-# POZİSYON SORGULAMA
-# ─────────────────────────────────────────────────────────────
 
 def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
@@ -195,12 +181,8 @@ def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
                 }
         return None
     except Exception as e:
-        log.debug(f"Pozisyon bilgisi: {e} — pozisyon yok kabul edildi")
+        log.error(f"Pozisyon bilgisi exception: {e}")
         return None
-
-# ─────────────────────────────────────────────────────────────
-# EMİR GÖNDERİM
-# ─────────────────────────────────────────────────────────────
 
 def _kaldirac_ayarla(sembol):
     try:
@@ -222,16 +204,15 @@ def _kaldirac_ayarla(sembol):
     except Exception as e:
         log.warning(f"Kaldıraç ayar uyarısı: {e}")
 
-def _miktar_hesapla(fiyat, sembol=''):
+def _miktar_hesapla(fiyat):
     """USDT miktarını kontrat sayısına çevir"""
     miktar = cfg.POZISYON_USDT / fiyat
-    # Düşük fiyatlı coinler için tam sayıya yuvarla
     if fiyat < 1:
-        return round(miktar, 0)  # Tam sayı
+        return int(round(miktar, 0))
     elif fiyat < 10:
-        return round(miktar, 1)  # 1 ondalık
+        return round(miktar, 1)
     else:
-        return round(miktar, 2)  # 2 ondalık
+        return round(miktar, 2)
 
 def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
@@ -241,21 +222,17 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
     tp     = sinyal['tp']
 
     if cfg.TEST_MODU:
-        log.info(f"[TEST] {yon} {sembol} @ {fiyat:.2f} | "
-                 f"SL:{sl:.2f} | Kaldıraç:{cfg.KALDIRAC}x")
+        log.info(f"[TEST] {yon} {sembol} @ {fiyat:.4f} | "
+                 f"SL:{sl:.4f} | Kaldıraç:{cfg.KALDIRAC}x")
         return True
 
     try:
-        # Kaldıraç ayarla
         _kaldirac_ayarla(sembol)
 
-        miktar = _miktar_hesapla(fiyat, sembol)
+        miktar = _miktar_hesapla(fiyat)
         side   = 'buy' if yon == 'LONG' else 'sell'
 
-        log.info(f"Emir gönderiliyor: {side.upper()} {miktar} {sembol}")
-
-        # Market emir
-        r = _post('/api/v2/mix/order/place-order', {
+        emir_body = {
             'symbol':      sembol,
             'productType': 'USDT-FUTURES',
             'marginMode':  'isolated',
@@ -264,13 +241,14 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
             'side':        side,
             'orderType':   'market',
             'tradeSide':   'open',
-        })
+        }
+        log.info(f"Emir gönderiliyor: {emir_body}")
+        r = _post('/api/v2/mix/order/place-order', emir_body)
         if r.get('code') != '00000':
-            log.error(f"Market emir hatası: {r.get('msg')}")
+            log.error(f"Market emir hatası: kod={r.get('code')} msg={r.get('msg')} tam={r}")
             return False
         log.info(f"Market emir OK: {r['data'].get('orderId')}")
 
-        # Stop-Loss
         holdSide = 'long' if yon == 'LONG' else 'short'
         sl_body = {
             'symbol':       sembol,
@@ -284,11 +262,10 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         log.info(f"SL gönderiliyor: {sl_body}")
         r_sl = _post('/api/v2/mix/order/place-tpsl-order', sl_body)
         if r_sl.get('code') != '00000':
-            log.warning(f"SL emir uyarısı: {r_sl.get('msg')} | Tam yanıt: {r_sl}")
+            log.warning(f"SL uyarısı: kod={r_sl.get('code')} msg={r_sl.get('msg')}")
         else:
             log.info(f"Stop-Loss ayarlandı: {sl} ✅")
 
-        # Take-Profit
         if tp:
             tp_body = {
                 'symbol':       sembol,
@@ -302,7 +279,7 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
             log.info(f"TP gönderiliyor: {tp_body}")
             r_tp = _post('/api/v2/mix/order/place-tpsl-order', tp_body)
             if r_tp.get('code') != '00000':
-                log.warning(f"TP emir uyarısı: {r_tp.get('msg')} | Tam yanıt: {r_tp}")
+                log.warning(f"TP uyarısı: kod={r_tp.get('code')} msg={r_tp.get('msg')}")
             else:
                 log.info(f"Take-Profit ayarlandı: {tp} ✅")
 
@@ -340,6 +317,5 @@ def pozisyon_kapat(client=None, sembol=None) -> bool:
         log.error(f"Kapatma hatası: {e}")
         return False
 
-# Eski Binance client uyumluluğu için
 def client_olustur():
     return None
