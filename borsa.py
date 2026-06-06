@@ -160,11 +160,10 @@ def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
     try:
         r = _get('/api/v2/mix/position/all-position', {
-            'productType': 'USDT-FUTURES',
-            'marginCoin': 'USDT',
+            'productType': 'usdt-futures',
         })
         if r.get('code') != '00000':
-            log.error(f"Pozisyon sorgu hatası: {r.get('msg')}")
+            log.error(f"Pozisyon sorgu hatası: kod={r.get('code')} msg={r.get('msg')}")
             return False
         pozlar = r.get('data', [])
         for p in pozlar:
@@ -173,18 +172,17 @@ def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
                 return True
         return False
     except Exception as e:
-        log.error(f"Pozisyon sorgu hatası: {e}")
+        log.error(f"Pozisyon sorgu exception: {e}")
         return False
 
 def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
     sembol = sembol or cfg.SEMBOL
     try:
         r = _get('/api/v2/mix/position/all-position', {
-            'productType': 'USDT-FUTURES',
-            'marginCoin': 'USDT',
+            'productType': 'usdt-futures',
         })
         if r.get('code') != '00000':
-            log.error(f"Pozisyon bilgisi hatası: {r.get('msg')}")
+            log.error(f"Pozisyon bilgisi hatası: kod={r.get('code')} msg={r.get('msg')}")
             return None
         pozlar = r.get('data', [])
         for p in pozlar:
@@ -197,7 +195,7 @@ def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
                 }
         return None
     except Exception as e:
-        log.error(f"Pozisyon bilgisi hatası: {e}")
+        log.debug(f"Pozisyon bilgisi: {e} — pozisyon yok kabul edildi")
         return None
 
 # ─────────────────────────────────────────────────────────────
