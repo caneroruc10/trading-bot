@@ -253,23 +253,21 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
 
         holdSide = 'long' if yon == 'LONG' else 'short'
 
-        # Stop-Loss — plan order yöntemi
+        # Stop-Loss
         try:
             sl_body = {
-                'symbol':       sembol,
-                'productType':  'USDT-FUTURES',
-                'marginCoin':   'USDT',
-                'planType':     'loss_plan',
-                'triggerPrice': str(round(sl, 4)),
-                'triggerType':  'mark_price',
-                'holdSide':     holdSide,
-                'size':         str(miktar),
-                'side':         'sell' if yon == 'LONG' else 'buy',
-                'orderType':    'market',
-                'tradeSide':    'close',
+                'symbol':        sembol.lower(),
+                'productType':   'usdt-futures',
+                'marginCoin':    'USDT',
+                'planType':      'loss_plan',
+                'triggerPrice':  str(round(sl, 4)),
+                'triggerType':   'mark_price',
+                'executePrice':  '0',
+                'holdSide':      holdSide,
+                'size':          str(miktar),
             }
             log.info(f"SL gönderiliyor: {sl_body}")
-            r_sl = _post('/api/v2/mix/order/place-plan-order', sl_body)
+            r_sl = _post('/api/v2/mix/order/place-tpsl-order', sl_body)
             if r_sl.get('code') != '00000':
                 log.warning(f"SL uyarısı: kod={r_sl.get('code')} msg={r_sl.get('msg')} tam={r_sl}")
             else:
@@ -277,24 +275,22 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         except Exception as e:
             log.error(f"SL exception: {e}")
 
-        # Take-Profit — plan order yöntemi
+        # Take-Profit
         if tp:
             try:
                 tp_body = {
-                    'symbol':       sembol,
-                    'productType':  'USDT-FUTURES',
-                    'marginCoin':   'USDT',
-                    'planType':     'normal_plan',
-                    'triggerPrice': str(round(tp, 4)),
-                    'triggerType':  'mark_price',
-                    'holdSide':     holdSide,
-                    'size':         str(miktar),
-                    'side':         'sell' if yon == 'LONG' else 'buy',
-                    'orderType':    'market',
-                    'tradeSide':    'close',
+                    'symbol':        sembol.lower(),
+                    'productType':   'usdt-futures',
+                    'marginCoin':    'USDT',
+                    'planType':      'profit_plan',
+                    'triggerPrice':  str(round(tp, 4)),
+                    'triggerType':   'mark_price',
+                    'executePrice':  '0',
+                    'holdSide':      holdSide,
+                    'size':          str(miktar),
                 }
                 log.info(f"TP gönderiliyor: {tp_body}")
-                r_tp = _post('/api/v2/mix/order/place-plan-order', tp_body)
+                r_tp = _post('/api/v2/mix/order/place-tpsl-order', tp_body)
                 if r_tp.get('code') != '00000':
                     log.warning(f"TP uyarısı: kod={r_tp.get('code')} msg={r_tp.get('msg')} tam={r_tp}")
                 else:
