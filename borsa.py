@@ -277,7 +277,6 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
             'planType':      'loss_plan',
             'triggerPrice':  str(round(sl, 2)),
             'triggerType':   'mark_price',
-            'size':          str(miktar),
             'holdSide':      holdSide,
         }
         log.info(f"SL gönderiliyor: {sl_body}")
@@ -296,7 +295,6 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
                 'planType':      'profit_plan',
                 'triggerPrice':  str(round(tp, 2)),
                 'triggerType':   'mark_price',
-                'size':          str(miktar),
                 'holdSide':      holdSide,
             }
             log.info(f"TP gönderiliyor: {tp_body}")
