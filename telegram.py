@@ -47,7 +47,7 @@ def sinyal_bildirimi(sinyal: dict, basarili: bool) -> bool:
     return mesaj_gonder(metin)
 
 def durum_bildirimi(mesaj: str) -> bool:
-    return mesaj_gonder(f"ℹ️ <b>ETH BOT</b>\n{mesaj}")
+    return mesaj_gonder(f"ℹ️ <b>BOT — {cfg.SEMBOL}</b>\n{mesaj}")
 
 def hata_bildirimi(hata: str) -> bool:
     return mesaj_gonder(f"⚠️ <b>HATA</b>\n<code>{hata}</code>")
