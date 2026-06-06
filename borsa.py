@@ -83,14 +83,12 @@ def _post(path, body: dict):
 
 def _bitget_veri(sembol, timeframe, limit):
     """Bitget public kline verisi"""
-    # Bitget timeframe formatı
     tf_map = {
         '1m':'1m', '3m':'3m', '5m':'5m', '15m':'15m',
         '30m':'30m', '1h':'1H', '2h':'2H', '4h':'4H',
         '6h':'6H', '12h':'12H', '1d':'1D',
     }
     bg_tf = tf_map.get(timeframe, '1H')
-    # Bitget sembol formatı: ETHUSDT → ETHUSDT (aynı)
     url = (f"https://api.bitget.com/api/v2/mix/market/candles"
            f"?symbol={sembol}&granularity={bg_tf}"
            f"&limit={limit}&productType=usdt-futures")
@@ -161,8 +159,7 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=500) -> pd.DataFra
 def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
     try:
-        r = _get('/api/v2/mix/position/single-position', {
-            'symbol': sembol,
+        r = _get('/api/v2/mix/position/all-position', {
             'productType': 'USDT-FUTURES',
             'marginCoin': 'USDT',
         })
@@ -171,8 +168,8 @@ def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
             return False
         pozlar = r.get('data', [])
         for p in pozlar:
-            if float(p.get('total', 0)) > 0:
-                log.info(f"Açık pozisyon: {p['holdSide']} {p['total']} @ {p.get('openPriceAvg', p.get('averageOpenPrice', 0))}")
+            if p.get('symbol') == sembol and float(p.get('total', 0)) > 0:
+                log.info(f"Açık pozisyon: {p['holdSide']} {p['total']} @ {p.get('openPriceAvg', 0)}")
                 return True
         return False
     except Exception as e:
@@ -182,18 +179,20 @@ def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
 def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
     sembol = sembol or cfg.SEMBOL
     try:
-        r = _get('/api/v2/mix/position/single-position', {
-            'symbol': sembol,
+        r = _get('/api/v2/mix/position/all-position', {
             'productType': 'USDT-FUTURES',
             'marginCoin': 'USDT',
         })
+        if r.get('code') != '00000':
+            log.error(f"Pozisyon bilgisi hatası: {r.get('msg')}")
+            return None
         pozlar = r.get('data', [])
         for p in pozlar:
-            if float(p.get('total', 0)) > 0:
+            if p.get('symbol') == sembol and float(p.get('total', 0)) > 0:
                 return {
                     'yon':         'LONG' if p['holdSide'] == 'long' else 'SHORT',
                     'miktar':      float(p['total']),
-                    'giris_fiyat': float(p.get('openPriceAvg', p.get('averageOpenPrice', 0))),
+                    'giris_fiyat': float(p.get('openPriceAvg', 0)),
                     'kar_zarar':   float(p.get('unrealizedPL', 0)),
                 }
         return None
@@ -207,7 +206,7 @@ def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
 
 def _kaldirac_ayarla(sembol):
     try:
-        r = _post('/api/v2/mix/account/set-leverage', {
+        _post('/api/v2/mix/account/set-leverage', {
             'symbol':      sembol,
             'productType': 'USDT-FUTURES',
             'marginCoin':  'USDT',
@@ -227,7 +226,6 @@ def _kaldirac_ayarla(sembol):
 
 def _miktar_hesapla(fiyat):
     """USDT miktarını kontrat sayısına çevir"""
-    # Bitget'te 1 kontrat = 1 coin (ETH için 0.01 ETH minimum)
     miktar = cfg.POZISYON_USDT / fiyat
     return round(miktar, 4)
 
@@ -248,7 +246,7 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         _kaldirac_ayarla(sembol)
 
         miktar = _miktar_hesapla(fiyat)
-        side   = 'buy'  if yon == 'LONG'  else 'sell'
+        side   = 'buy' if yon == 'LONG' else 'sell'
 
         log.info(f"Emir gönderiliyor: {side.upper()} {miktar} {sembol}")
 
@@ -271,13 +269,13 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         # Stop-Loss
         holdSide = 'long' if yon == 'LONG' else 'short'
         sl_body = {
-            'symbol':        sembol,
-            'productType':   'USDT-FUTURES',
-            'marginCoin':    'USDT',
-            'planType':      'loss_plan',
-            'triggerPrice':  str(round(sl, 2)),
-            'triggerType':   'mark_price',
-            'holdSide':      holdSide,
+            'symbol':       sembol,
+            'productType':  'USDT-FUTURES',
+            'marginCoin':   'USDT',
+            'planType':     'loss_plan',
+            'triggerPrice': str(round(sl, 4)),
+            'triggerType':  'mark_price',
+            'holdSide':     holdSide,
         }
         log.info(f"SL gönderiliyor: {sl_body}")
         r_sl = _post('/api/v2/mix/order/place-tpsl-order', sl_body)
@@ -289,13 +287,13 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         # Take-Profit
         if tp:
             tp_body = {
-                'symbol':        sembol,
-                'productType':   'USDT-FUTURES',
-                'marginCoin':    'USDT',
-                'planType':      'profit_plan',
-                'triggerPrice':  str(round(tp, 2)),
-                'triggerType':   'mark_price',
-                'holdSide':      holdSide,
+                'symbol':       sembol,
+                'productType':  'USDT-FUTURES',
+                'marginCoin':   'USDT',
+                'planType':     'profit_plan',
+                'triggerPrice': str(round(tp, 4)),
+                'triggerType':  'mark_price',
+                'holdSide':     holdSide,
             }
             log.info(f"TP gönderiliyor: {tp_body}")
             r_tp = _post('/api/v2/mix/order/place-tpsl-order', tp_body)
