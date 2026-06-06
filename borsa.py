@@ -248,6 +248,8 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
             log.error(f"Market emir hatası: kod={r.get('code')} msg={r.get('msg')} tam={r}")
             return False
         log.info(f"Market emir OK: {r['data'].get('orderId')}")
+        log.info("Pozisyon işlenmesi bekleniyor: 10 saniye...")
+        time.sleep(10)
 
         holdSide = 'long' if yon == 'LONG' else 'short'
 
