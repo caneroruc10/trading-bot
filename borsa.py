@@ -222,10 +222,16 @@ def _kaldirac_ayarla(sembol):
     except Exception as e:
         log.warning(f"Kaldıraç ayar uyarısı: {e}")
 
-def _miktar_hesapla(fiyat):
+def _miktar_hesapla(fiyat, sembol=''):
     """USDT miktarını kontrat sayısına çevir"""
     miktar = cfg.POZISYON_USDT / fiyat
-    return round(miktar, 4)
+    # Düşük fiyatlı coinler için tam sayıya yuvarla
+    if fiyat < 1:
+        return round(miktar, 0)  # Tam sayı
+    elif fiyat < 10:
+        return round(miktar, 1)  # 1 ondalık
+    else:
+        return round(miktar, 2)  # 2 ondalık
 
 def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
@@ -243,7 +249,7 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         # Kaldıraç ayarla
         _kaldirac_ayarla(sembol)
 
-        miktar = _miktar_hesapla(fiyat)
+        miktar = _miktar_hesapla(fiyat, sembol)
         side   = 'buy' if yon == 'LONG' else 'sell'
 
         log.info(f"Emir gönderiliyor: {side.upper()} {miktar} {sembol}")
