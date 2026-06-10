@@ -318,7 +318,6 @@ def pozisyon_kapat(client=None, sembol=None) -> bool:
         kapatma_body = {
             'symbol':      sembol.lower(),
             'productType': 'usdt-futures',
-            'marginMode':  'isolated',
             'marginCoin':  'USDT',
             'size':        miktar_str,
             'side':        side,
