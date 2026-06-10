@@ -1,9 +1,10 @@
 """
-ETH PMAX BOT — Ana Program
-===========================
+PMAX BOT — Ana Program
+=======================
 Railway'de çalışır.
-- Her saatin :05'inde sinyal kontrolü
-- Her 4 saatte bir durum raporu (00:05, 04:05, 08:05, 12:05, 16:05, 20:05)
+- Her 5 dakikada bir sinyal kontrolü
+- Her 4 saatte bir durum raporu
+- Açık pozisyonda PMAX ters dönüşü takip eder
 """
 
 import time
@@ -28,13 +29,10 @@ log = logging.getLogger('main')
 # ─────────────────────────────────────────────────────────────
 
 def durum_raporu():
-    """4 saatte bir Telegram'a durum raporu gönder"""
     log.info("Durum raporu hazırlanıyor...")
     try:
         df = borsa.ohlcv_cek(sembol=cfg.SEMBOL, timeframe=cfg.TIMEFRAME, limit=500)
-        son = df.iloc[-1]
 
-        # Strateji hesapla
         import numpy as np
         from collections import deque
         from strateji import (hesapla_atr, hesapla_ema, hesapla_pmax,
@@ -70,22 +68,15 @@ def durum_raporu():
 
         rejim = rejim_hesapla(close)
 
-        # PMAX yön
-        yon_emoji = '🟢 BULL' if pmax_bull[-1] else '🔴 BEAR'
-
-        # Skor bar (10 blok)
-        dolu = int(trend_skoru / 10)
-        bos  = 10 - dolu
-        skor_bar = '█' * dolu + '░' * bos
-
-        # Rejim emoji
+        yon_emoji   = '🟢 BULL' if pmax_bull[-1] else '🔴 BEAR'
+        dolu        = int(trend_skoru / 10)
+        skor_bar    = '█' * dolu + '░' * (10 - dolu)
         rejim_emoji = {'Sakin': '🟦', 'Geçiş': '🟨', 'Kriz': '🟥'}.get(rejim, '⬜')
 
-        # Pozisyon durumu
         poz = borsa.pozisyon_bilgisi()
         if poz:
             poz_metin = (f"\n💼 Açık Pozisyon: {poz['yon']} "
-                        f"@ {poz['giris_fiyat']:.2f} "
+                        f"@ {poz['giris_fiyat']:.4f} "
                         f"| K/Z: {poz['kar_zarar']:+.2f} USDT")
         else:
             poz_metin = "\n💼 Açık Pozisyon: Yok"
@@ -93,7 +84,7 @@ def durum_raporu():
         metin = f"""📊 <b>PMAX — {cfg.SEMBOL} 4 Saatlik Durum</b>
 {datetime.now().strftime('%d.%m.%Y %H:%M')} UTC+3
 
-💰 Fiyat     : <code>{close[-1]:.2f}</code> USDT
+💰 Fiyat     : <code>{close[-1]:.4f}</code> USDT
 📈 PMAX Yön  : {yon_emoji}
 {rejim_emoji} Rejim     : <b>{rejim}</b>
 
@@ -101,7 +92,7 @@ def durum_raporu():
 <code>{skor_bar}</code>
 {'✅ AKTİF' if trend_aktif else f'❌ PASİF (eşik: {cfg.SCORE_THRESH})'}
 
-🔧 ATR       : {atr[-1]:.2f}
+🔧 ATR       : {atr[-1]:.4f}
 🏗 Yapı Skoru: {ss:.1f}
 ⚡ Vol Skoru : {vs:.1f}
 {poz_metin}"""
@@ -124,25 +115,61 @@ def kontrol_et():
         df = borsa.ohlcv_cek(sembol=cfg.SEMBOL, timeframe=cfg.TIMEFRAME, limit=500)
         log.info(f"Veri OK: {len(df)} bar")
 
+        # ── Açık pozisyon kontrolü
+        poz = borsa.pozisyon_bilgisi()
+
+        if poz:
+            log.info(f"Açık pozisyon: {poz['yon']} K/Z:{poz['kar_zarar']:+.2f}")
+
+            if cfg.TEST_MODU:
+                # Test modunda sadece PMAX durumunu logla
+                sinyal = strateji.sinyal_uret(df)
+                if sinyal and sinyal['yon'] != poz['yon']:
+                    log.info(f"[TEST] PMAX ters döndü — {poz['yon']} kapatılacaktı, {sinyal['yon']} açılacaktı")
+                return
+
+            # PMAX ters döndü mü?
+            if strateji.pmax_ters_mi(df, poz['yon']):
+                log.info(f"PMAX ters sinyali — {poz['yon']} pozisyon kapatılıyor")
+                kapandi = borsa.pozisyon_kapat()
+
+                if kapandi:
+                    log.info("Pozisyon kapatıldı ✅")
+                    telegram.durum_bildirimi(
+                        f"🔄 PMAX Ters Dönüş — {cfg.SEMBOL}\n"
+                        f"{poz['yon']} pozisyon kapatıldı\n"
+                        f"K/Z: {poz['kar_zarar']:+.2f} USDT"
+                    )
+
+                    # Hemen ters yönde giriş kontrolü
+                    sinyal = strateji.sinyal_uret(df)
+                    if sinyal:
+                        log.info(f"Ters yön sinyali onaylandı: {sinyal['yon']} — giriş yapılıyor")
+                        basarili = borsa.emir_gonder(sinyal=sinyal)
+                        telegram.sinyal_bildirimi(sinyal, basarili)
+                        if basarili:
+                            log.info("✅ Ters yön işlemi tamamlandı")
+                        else:
+                            log.error("❌ Ters yön emri gönderilemedi")
+                    else:
+                        log.info("Ters yön sinyali yok — pozisyonsuz bekleniyor")
+                else:
+                    log.error("Pozisyon kapatılamadı!")
+            return
+
+        # ── Açık pozisyon yok — yeni sinyal ara
         sinyal = strateji.sinyal_uret(df)
 
         if sinyal is None:
             log.info("Sinyal yok — bekleniyor")
             return
 
-        log.info(f"Sinyal: {sinyal['yon']} @ {sinyal['fiyat']:.2f} | "
-                 f"SL:{sinyal['sl']:.2f} | Rejim:{sinyal['rejim']}")
+        log.info(f"Sinyal: {sinyal['yon']} @ {sinyal['fiyat']:.4f} | "
+                 f"SL:{sinyal['sl']:.4f} | Rejim:{sinyal['rejim']}")
 
         if cfg.TEST_MODU:
             log.info("[TEST MODU] Emir gönderilmedi")
             telegram.sinyal_bildirimi(sinyal, True)
-            return
-
-        # Açık pozisyon var mı?
-        if borsa.acik_pozisyon_var_mi():
-            poz = borsa.pozisyon_bilgisi()
-            if poz:
-                log.info(f"Açık pozisyon: {poz['yon']} K/Z:{poz['kar_zarar']:+.2f}")
             return
 
         basarili = borsa.emir_gonder(sinyal=sinyal)
@@ -175,15 +202,13 @@ def baslangic():
         f"Pozisyon: {cfg.POZISYON_USDT} USDT | Kaldıraç: {cfg.KALDIRAC}x"
     )
     kontrol_et()
-    durum_raporu()  # Başlangıçta bir kez gönder
+    durum_raporu()
 
 def main():
     baslangic()
 
-    # Her 5 dakikada bir sinyal kontrolü — cross kaçırılmasın
     schedule.every(5).minutes.do(kontrol_et)
 
-    # Her 4 saatte bir durum raporu
     for saat in ["00:05", "04:05", "08:05", "12:05", "16:05", "20:05"]:
         schedule.every().day.at(saat).do(durum_raporu)
 
