@@ -313,20 +313,24 @@ def pozisyon_kapat(client=None, sembol=None) -> bool:
         if not poz:
             return True
         side = 'sell' if poz['yon'] == 'LONG' else 'buy'
-        r = _post('/api/v2/mix/order/place-order', {
-            'symbol':      sembol,
-            'productType': 'USDT-FUTURES',
+        miktar = poz['miktar']
+        miktar_str = str(int(miktar)) if miktar == int(miktar) else str(miktar)
+        kapatma_body = {
+            'symbol':      sembol.lower(),
+            'productType': 'usdt-futures',
             'marginMode':  'isolated',
             'marginCoin':  'USDT',
-            'size':        str(poz['miktar']),
+            'size':        miktar_str,
             'side':        side,
             'orderType':   'market',
             'tradeSide':   'close',
-        })
+        }
+        log.info(f"Pozisyon kapatılıyor: {kapatma_body}")
+        r = _post('/api/v2/mix/order/place-order', kapatma_body)
         if r.get('code') == '00000':
             log.info("Pozisyon kapatıldı ✅")
             return True
-        log.error(f"Pozisyon kapatma hatası: {r.get('msg')}")
+        log.error(f"Pozisyon kapatma hatası: kod={r.get('code')} msg={r.get('msg')}")
         return False
     except Exception as e:
         log.error(f"Kapatma hatası: {e}")
