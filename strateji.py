@@ -98,17 +98,12 @@ def volatilite_puani(atr_val, fiyat):
 # ─────────────────────────────────────────────────────────────
 
 def rejim_hesapla(close_arr, pencere=168):
-    """
-    Son N barın volatilitesinden rejim tespit et.
-    Döndürür: 'Sakin', 'Geçiş' veya 'Kriz'
-    """
     n = len(close_arr)
     if n < pencere + 10:
         return 'Bilinmiyor'
 
     log_r = np.diff(np.log(close_arr + 1e-12))
 
-    # Rolling volatilite
     vol = []
     for i in range(pencere, len(log_r)+1):
         vol.append(np.std(log_r[i-pencere:i]) * np.sqrt(24*365))
@@ -119,7 +114,6 @@ def rejim_hesapla(close_arr, pencere=168):
 
     log_vol = np.log(vol + 1e-9)
 
-    # GMM — 3 bileşen
     q33, q67 = np.percentile(log_vol, [33, 67])
     mu    = np.array([np.mean(log_vol[log_vol < q33]),
                       np.mean(log_vol[(log_vol>=q33)&(log_vol<q67)]),
@@ -139,7 +133,6 @@ def rejim_hesapla(close_arr, pencere=168):
         sigma = np.sqrt((resp * (log_vol[:,None]-mu)**2).sum(axis=0) / Nk)
         sigma = np.maximum(sigma, 0.01)
 
-    # Son barın rejimi
     son_vol     = log_vol[-1]
     olasliklar  = np.array([pi[k]*norm.pdf(son_vol, mu[k], sigma[k]) for k in range(3)])
     olasliklar /= olasliklar.sum()
@@ -157,26 +150,38 @@ def rejim_hesapla(close_arr, pencere=168):
     return rejim
 
 # ─────────────────────────────────────────────────────────────
+# PMAX TERS DÖNÜŞ TESPİTİ
+# ─────────────────────────────────────────────────────────────
+
+def pmax_ters_mi(df: pd.DataFrame, mevcut_yon: str) -> bool:
+    """
+    Mevcut pozisyon yönüne göre PMAX ters döndü mü kontrol eder.
+    LONG pozisyonda PMAX BEAR'a geçtiyse → True
+    SHORT pozisyonda PMAX BULL'a geçtiyse → True
+    """
+    close = df['close'].values
+    high  = df['high'].values
+    low   = df['low'].values
+
+    atr      = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+    ema      = hesapla_ema(close, cfg.EMA_PERIOD)
+    _, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
+
+    simdi_bull = pmax_bull[-1]
+
+    if mevcut_yon == 'LONG' and not simdi_bull:
+        log.info("PMAX BEAR'a döndü — LONG pozisyon kapatılacak")
+        return True
+    if mevcut_yon == 'SHORT' and simdi_bull:
+        log.info("PMAX BULL'a döndü — SHORT pozisyon kapatılacak")
+        return True
+    return False
+
+# ─────────────────────────────────────────────────────────────
 # ANA STRATEJİ FONKSİYONU
 # ─────────────────────────────────────────────────────────────
 
 def sinyal_uret(df: pd.DataFrame) -> dict | None:
-    """
-    OHLCV DataFrame alır, sinyal üretir.
-
-    Döndürür:
-        None  → sinyal yok
-        dict  → {
-            'yon': 'LONG' veya 'SHORT',
-            'fiyat': giriş fiyatı,
-            'atr': ATR değeri,
-            'sl': stop-loss fiyatı,
-            'tp': take-profit fiyatı (None = kapalı),
-            'trail_pct': trailing stop yüzdesi,
-            'trend_skoru': float,
-            'rejim': str,
-        }
-    """
     if len(df) < cfg.ATR_PERIOD + cfg.PIVOT_RIGHT + cfg.PIVOT_LEFT + cfg.SINYAL_GECIKME + 10:
         log.warning("Yeterli bar yok")
         return None
@@ -186,19 +191,10 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     low   = df['low'].values
     n     = len(close)
 
-    # ── Teknik hesaplamalar
     atr       = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
     ema       = hesapla_ema(close, cfg.EMA_PERIOD)
     pmax_line, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
 
-    # ── Bull/Bear cross tespiti
-    bull_cross = np.zeros(n, dtype=bool)
-    bear_cross = np.zeros(n, dtype=bool)
-    for i in range(1, n):
-        if pmax_bull[i] and not pmax_bull[i-1]: bull_cross[i] = True
-        if not pmax_bull[i] and pmax_bull[i-1]: bear_cross[i] = True
-
-    # ── Trend skoru (son bar)
     ph = deque(maxlen=cfg.PIVOT_COUNT)
     pl = deque(maxlen=cfg.PIVOT_COUNT)
     min_bar = cfg.ATR_PERIOD + cfg.PIVOT_RIGHT + cfg.PIVOT_LEFT
@@ -221,20 +217,8 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
              f"PMAX: {'BULL' if pmax_bull[-1] else 'BEAR'} | "
              f"ATR: {atr[-1]:.2f}")
 
-    # ── Trend skoru filtresi
     if trend_skoru < cfg.SCORE_THRESH:
         log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
-        return None
-
-    # ── PMAX + TREND SKORU SINYAL MANTIĞI
-    # Kural:
-    #   1. PMAX hangi yöndeyse o yönde pozisyon al
-    #   2. Trend skoru >= eşik olduğunda gir
-    #   3. Yön değişirse yeni yönde bekle, skor gelince gir
-    #   4. Skor düşerse sistem zaten pozisyon açmaz (çıkış borsa stop-loss ile)
-
-    if trend_skoru < cfg.SCORE_THRESH:
-        log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — bekleniyor")
         return None
 
     if pmax_bull[-1]:
@@ -248,13 +232,11 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
         giris_atr   = atr[-1]
         log.info(f"SHORT sinyali — PMAX BEAR | skor {trend_skoru:.1f}")
 
-    # ── Rejim filtresi
     rejim = rejim_hesapla(close)
     if (rejim, yon.lower()) in cfg.ELENEN_KOMBINASYONLAR:
         log.info(f"Rejim filtresi: {rejim}+{yon} → elenmiş kombinasyon")
         return None
 
-    # ── Stop-loss ve take-profit hesapla
     if yon == 'LONG':
         sl = round(giris_fiyat - giris_atr * cfg.HARD_STOP_ATR, 4)
         tp = round(giris_fiyat + giris_atr * cfg.KAR_AL_ATR, 4) if cfg.KAR_AL_ATR > 0 else None
@@ -262,7 +244,6 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
         sl = round(giris_fiyat + giris_atr * cfg.HARD_STOP_ATR, 4)
         tp = round(giris_fiyat - giris_atr * cfg.KAR_AL_ATR, 4) if cfg.KAR_AL_ATR > 0 else None
 
-    # Trailing stop callback yüzdesi
     trail_pct = round((giris_atr * cfg.TRAIL_STOP_ATR / giris_fiyat) * 100, 2)
 
     log.info(f"✅ SİNYAL: {yon} @ {giris_fiyat:.2f} | "
