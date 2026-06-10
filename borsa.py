@@ -312,28 +312,14 @@ def pozisyon_kapat(client=None, sembol=None) -> bool:
         poz = pozisyon_bilgisi(sembol=sembol)
         if not poz:
             return True
-        side = 'sell' if poz['yon'] == 'LONG' else 'buy'
-        miktar = poz['miktar']
-        miktar_str = str(int(miktar)) if miktar == int(miktar) else str(miktar)
+        holdSide = 'long' if poz['yon'] == 'LONG' else 'short'
         kapatma_body = {
-            'symbol':      sembol.lower(),
-            'productType': 'usdt-futures',
-            'marginCoin':  'USDT',
-            'size':        miktar_str,
-            'side':        side,
-            'orderType':   'market',
-            'tradeSide':   'close',
+            'symbol':      sembol.upper(),
+            'productType': 'USDT-FUTURES',
+            'holdSide':    holdSide,
         }
         log.info(f"Pozisyon kapatılıyor: {kapatma_body}")
-        # Flash kapat — önce normal dene, hata alırsa reduceOnly dene
-        r = _post('/api/v2/mix/order/place-order', kapatma_body)
-        if r.get('code') != '00000':
-            log.warning(f"Normal kapatma hatası: {r.get('code')} {r.get('msg')} — flash-close deneniyor")
-            r = _post('/api/v2/mix/order/flash-close-position', {
-                'symbol':      sembol.lower(),
-                'productType': 'usdt-futures',
-                'holdSide':    'long' if poz['yon'] == 'LONG' else 'short',
-            })
+        r = _post('/api/v2/mix/order/close-positions', kapatma_body)
         if r.get('code') == '00000':
             log.info("Pozisyon kapatıldı ✅")
             return True
