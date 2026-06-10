@@ -325,7 +325,15 @@ def pozisyon_kapat(client=None, sembol=None) -> bool:
             'tradeSide':   'close',
         }
         log.info(f"Pozisyon kapatılıyor: {kapatma_body}")
+        # Flash kapat — önce normal dene, hata alırsa reduceOnly dene
         r = _post('/api/v2/mix/order/place-order', kapatma_body)
+        if r.get('code') != '00000':
+            log.warning(f"Normal kapatma hatası: {r.get('code')} {r.get('msg')} — flash-close deneniyor")
+            r = _post('/api/v2/mix/order/flash-close-position', {
+                'symbol':      sembol.lower(),
+                'productType': 'usdt-futures',
+                'holdSide':    'long' if poz['yon'] == 'LONG' else 'short',
+            })
         if r.get('code') == '00000':
             log.info("Pozisyon kapatıldı ✅")
             return True
