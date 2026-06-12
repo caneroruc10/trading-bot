@@ -15,28 +15,28 @@ TELEGRAM_TOKEN   = os.getenv('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
 # ─── SEMBOL
-SEMBOL     = os.getenv('SEMBOL', 'ETHUSDT')
-TIMEFRAME  = os.getenv('TIMEFRAME', '1h')
+SEMBOL        = os.getenv('SEMBOL', 'ETHUSDT')
+TIMEFRAME     = os.getenv('TIMEFRAME', '1h')
 POZISYON_USDT = float(os.getenv('POZISYON_USDT', '100'))  # Her işlemde kaç USDT
-KALDIRAC     = int(os.getenv('KALDIRAC', '3'))                  # Kaldıraç oranı
+KALDIRAC      = int(os.getenv('KALDIRAC', '3'))            # Kaldıraç oranı
 
-# ─── PMAX PARAMETRELERİ (TradingView değerleri)
-ATR_PERIOD   = int(os.getenv('ATR_PERIOD', '18'))
-EMA_PERIOD   = int(os.getenv('EMA_PERIOD', '4'))
-COEFFICIENT  = float(os.getenv('COEFFICIENT', '1.0'))
+# ─── PMAX PARAMETRELERİ
+ATR_PERIOD  = int(os.getenv('ATR_PERIOD',  '18'))   # ATR periyodu
+EMA_PERIOD  = int(os.getenv('EMA_PERIOD',  '10'))   # VAR/EMA periyodu
+COEFFICIENT = float(os.getenv('COEFFICIENT', '5.0'))  # PMAX band genişliği
 
 # ─── TREND SKORU
-PIVOT_LEFT   = int(os.getenv('PIVOT_LEFT', '2'))
-PIVOT_RIGHT  = int(os.getenv('PIVOT_RIGHT', '2'))
-PIVOT_COUNT  = int(os.getenv('PIVOT_COUNT', '2'))
+PIVOT_LEFT   = int(os.getenv('PIVOT_LEFT',   '2'))
+PIVOT_RIGHT  = int(os.getenv('PIVOT_RIGHT',  '2'))
+PIVOT_COUNT  = int(os.getenv('PIVOT_COUNT',  '2'))
 SCORE_THRESH = int(os.getenv('SCORE_THRESH', '40'))
 
-# ─── STOP LOSS (Binance stop-loss emir olarak gönderilir)
-HARD_STOP_ATR   = float(os.getenv('HARD_STOP_ATR', '5.0'))    # 5x ATR
-TRAIL_STOP_ATR  = float(os.getenv('TRAIL_STOP_ATR', '1.5'))   # 1.5x ATR (callback)
-KAR_AL_ATR      = float(os.getenv('KAR_AL_ATR', '5.5'))       # 5.5x ATR (0 = kapalı)
+# ─── STOP LOSS
+HARD_STOP_ATR  = float(os.getenv('HARD_STOP_ATR',  '5.0'))   # 5x ATR
+TRAIL_STOP_ATR = float(os.getenv('TRAIL_STOP_ATR',  '1.5'))  # 1.5x ATR (callback)
+KAR_AL_ATR     = float(os.getenv('KAR_AL_ATR',      '5.5'))  # 5.5x ATR (0 = kapalı)
 
-# ─── VOLATİLİTE NORMALIZASYON (Matriks versiyonu)
+# ─── VOLATİLİTE NORMALIZASYON
 VOL_MIN = float(os.getenv('VOL_MIN', '0.3'))
 VOL_MAX = float(os.getenv('VOL_MAX', '1.5'))
 
@@ -53,7 +53,6 @@ def _parse_elenenler(env_str):
             parcalar = kombinasyon.split('+')
             rejim = parcalar[0].strip()
             yon   = parcalar[1].strip().lower()
-            # Türkçe karakter normalizasyonu
             rejim = rejim.replace('Gecis', 'Geçiş').replace('Gecış', 'Geçiş')
             sonuc.add((rejim, yon))
     return sonuc
@@ -63,18 +62,18 @@ ELENEN_KOMBINASYONLAR = _parse_elenenler(_env_elenenler) if _env_elenenler else 
     ('Sakin', 'long'), ('Geçiş', 'short')  # ETH varsayılan
 }
 
-# ─── PMAX GECİKME (Matriks = 3 bar gecikme)
+# ─── PMAX GECİKME
 SINYAL_GECIKME = int(os.getenv('SINYAL_GECIKME', '3'))
 
 # ─── SİSTEM
-TEST_MODU = os.getenv('TEST_MODU', 'true').lower() == 'true'  # True = emir gönderme, sadece log
+TEST_MODU = os.getenv('TEST_MODU', 'true').lower() == 'true'
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
 # ─── ÖZET
 def ayarlari_yazdir():
     print(f"""
 ╔══════════════════════════════════════╗
-║  ETH PMAX BOT — Konfigürasyon       ║
+║  PMAX BOT — Konfigürasyon           ║
 ╠══════════════════════════════════════╣
 ║  Sembol     : {SEMBOL:<22}║
 ║  Timeframe  : {TIMEFRAME:<22}║
@@ -82,7 +81,7 @@ def ayarlari_yazdir():
 ║  Test modu  : {str(TEST_MODU):<22}║
 ╠══════════════════════════════════════╣
 ║  ATR        : {ATR_PERIOD:<22}║
-║  EMA        : {EMA_PERIOD:<22}║
+║  VAR Period : {EMA_PERIOD:<22}║
 ║  Coeff      : {COEFFICIENT:<22}║
 ║  Skor eşiği : {SCORE_THRESH:<22}║
 ╠══════════════════════════════════════╣
