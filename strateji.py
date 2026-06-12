@@ -5,6 +5,10 @@ PMAX + Trend Skoru + Rejim Filtresi
 
 Giriş : OHLCV DataFrame
 Çıkış : Sinyal dict veya None
+
+Değişiklik: EMA → VAR (Variable Index Dynamic Average)
+  - Yatay piyasada yavaşlar → daha az sahte sinyal
+  - Trend piyasasında hızlanır → geç kalma azalır
 """
 
 import numpy as np
@@ -42,10 +46,55 @@ def hesapla_ema(close, period):
         ema[i] = close[i]*k + ema[i-1]*(1-k)
     return ema
 
-def hesapla_pmax(close, ema, atr, coeff):
-    n = len(close)
-    upper = ema + coeff * atr
-    lower = ema - coeff * atr
+def hesapla_var(close, period):
+    """
+    VAR — Variable Index Dynamic Average (Pine Script ile birebir aynı mantık)
+    
+    Çalışma prensibi:
+      - CMO (Chande Momentum Oscillator) ile trendin gücünü ölçer
+      - Güçlü trendde: alpha yükselir → fiyata hızlı yaklaşır
+      - Yatay piyasada: alpha düşer → yavaş hareket eder, gürültüyü filtreler
+    
+    Parametreler:
+      close  : fiyat dizisi (numpy array)
+      period : EMA_PERIOD ile aynı değer kullanılır
+    """
+    n      = len(close)
+    valpha = 2.0 / (period + 1)
+
+    # Yukarı / aşağı hareketler
+    vud = np.zeros(n)
+    vdd = np.zeros(n)
+    for i in range(1, n):
+        diff = close[i] - close[i - 1]
+        if diff > 0:
+            vud[i] = diff
+        else:
+            vdd[i] = -diff
+
+    var = np.zeros(n)
+    # İlk 9 bar için warmup: fiyatı doğrudan ata
+    for i in range(min(9, n)):
+        var[i] = close[i]
+
+    for i in range(9, n):
+        vUD   = np.sum(vud[i-9:i])
+        vDD   = np.sum(vdd[i-9:i])
+        denom = vUD + vDD
+        vCMO  = (vUD - vDD) / denom if denom > 0 else 0.0
+        # Pine: VAR := nz(valpha*abs(vCMO)*src) + (1 - valpha*abs(vCMO))*nz(VAR[1])
+        var[i] = (valpha * abs(vCMO) * close[i]
+                  + (1.0 - valpha * abs(vCMO)) * var[i - 1])
+
+    return var
+
+def hesapla_pmax(close, ma, atr, coeff):
+    """
+    PMAX hesabı — ma parametresi EMA ya da VAR olabilir (Pine ile aynı mantık)
+    """
+    n     = len(close)
+    upper = ma + coeff * atr
+    lower = ma - coeff * atr
     pmax  = np.zeros(n)
     pmax[0] = close[0]
     for i in range(1, n):
@@ -53,7 +102,7 @@ def hesapla_pmax(close, ema, atr, coeff):
             pmax[i] = max(lower[i], pmax[i-1])
         else:
             pmax[i] = min(upper[i], pmax[i-1])
-    pmax_bull = ema > pmax
+    pmax_bull = ma > pmax
     return pmax, pmax_bull
 
 def pivot_yuksek_mi(high, i, left, right):
@@ -163,9 +212,9 @@ def pmax_ters_mi(df: pd.DataFrame, mevcut_yon: str) -> bool:
     high  = df['high'].values
     low   = df['low'].values
 
-    atr      = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    ema      = hesapla_ema(close, cfg.EMA_PERIOD)
-    _, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
+    atr          = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+    var          = hesapla_var(close, cfg.EMA_PERIOD)          # EMA → VAR
+    _, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
     simdi_bull = pmax_bull[-1]
 
@@ -191,9 +240,9 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     low   = df['low'].values
     n     = len(close)
 
-    atr       = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    ema       = hesapla_ema(close, cfg.EMA_PERIOD)
-    pmax_line, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
+    atr                  = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+    var                  = hesapla_var(close, cfg.EMA_PERIOD)          # EMA → VAR
+    pmax_line, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
     ph = deque(maxlen=cfg.PIVOT_COUNT)
     pl = deque(maxlen=cfg.PIVOT_COUNT)
@@ -215,7 +264,7 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     log.info(f"Trend skoru: {trend_skoru:.1f}/100 "
              f"(Yapı:{ss:.1f} Vol:{vs:.1f}) | "
              f"PMAX: {'BULL' if pmax_bull[-1] else 'BEAR'} | "
-             f"ATR: {atr[-1]:.2f}")
+             f"ATR: {atr[-1]:.2f} | MA: VAR({cfg.EMA_PERIOD})")
 
     if trend_skoru < cfg.SCORE_THRESH:
         log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
