@@ -219,8 +219,12 @@ def _miktar_hesapla(fiyat):
         return int(round(miktar, 0))
     elif fiyat < 10:
         return round(miktar, 1)
-    else:
+    elif fiyat < 100:
         return round(miktar, 2)
+    elif fiyat < 10000:
+        return round(miktar, 3)
+    else:
+        return round(miktar, 4)
 
 def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
