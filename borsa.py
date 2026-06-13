@@ -70,8 +70,12 @@ def _post(path, body: dict):
         headers=_headers('POST', path, body_str),
         method='POST',
     )
-    with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        hata_body = e.read().decode('utf-8', errors='ignore')
+        raise Exception(f"HTTP {e.code}: {hata_body}")
 
 # ─────────────────────────────────────────────────────────────
 # VERİ ÇEKME
