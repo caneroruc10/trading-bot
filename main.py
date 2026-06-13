@@ -35,7 +35,7 @@ def durum_raporu():
 
         import numpy as np
         from collections import deque
-        from strateji import (hesapla_atr, hesapla_var, hesapla_pmax,
+        from strateji import (hesapla_atr, hesapla_ema, hesapla_pmax,
                               pivot_yuksek_mi, pivot_alcak_mi,
                               fiyat_yapisi_puani, volatilite_puani,
                               rejim_hesapla)
@@ -44,9 +44,9 @@ def durum_raporu():
         high  = df['high'].values
         low   = df['low'].values
 
-        atr            = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-        var            = hesapla_var(close, cfg.EMA_PERIOD)
-        pmax_line, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
+        atr                  = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+        ema                  = hesapla_ema(close, cfg.EMA_PERIOD)
+        pmax_line, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
 
         ph = deque(maxlen=cfg.PIVOT_COUNT)
         pl = deque(maxlen=cfg.PIVOT_COUNT)
@@ -115,7 +115,6 @@ def kontrol_et():
         df = borsa.ohlcv_cek(sembol=cfg.SEMBOL, timeframe=cfg.TIMEFRAME, limit=500)
         log.info(f"Veri OK: {len(df)} bar")
 
-        # ── Açık pozisyon kontrolü
         poz = borsa.pozisyon_bilgisi()
 
         if poz:
@@ -127,7 +126,6 @@ def kontrol_et():
                     log.info(f"[TEST] PMAX ters döndü — {poz['yon']} kapatılacaktı, {sinyal['yon']} açılacaktı")
                 return
 
-            # PMAX ters döndü mü?
             if strateji.pmax_ters_mi(df, poz['yon']):
                 log.info(f"PMAX ters sinyali — {poz['yon']} pozisyon kapatılıyor")
                 kapandi = borsa.pozisyon_kapat()
@@ -140,7 +138,6 @@ def kontrol_et():
                         f"K/Z: {poz['kar_zarar']:+.2f} USDT"
                     )
 
-                    # Hemen ters yönde giriş kontrolü
                     sinyal = strateji.sinyal_uret(df)
                     if sinyal:
                         log.info(f"Ters yön sinyali onaylandı: {sinyal['yon']} — giriş yapılıyor")
@@ -156,7 +153,6 @@ def kontrol_et():
                     log.error("Pozisyon kapatılamadı!")
             return
 
-        # ── Açık pozisyon yok — yeni sinyal ara
         sinyal = strateji.sinyal_uret(df)
 
         if sinyal is None:
