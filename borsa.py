@@ -3,7 +3,7 @@ Borsa Modülü — Bitget Futures
 ================================
 - Veri çekme (public API)
 - Pozisyon sorgulama
-- Emir gönderme
+- Emir gönderme (SL/TP emir gönderilmez — PMAX sinyali ile yönetilir)
 """
 
 import logging
@@ -73,6 +73,10 @@ def _post(path, body: dict):
     with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
         return json.loads(r.read())
 
+# ─────────────────────────────────────────────────────────────
+# VERİ ÇEKME
+# ─────────────────────────────────────────────────────────────
+
 def _bitget_veri(sembol, timeframe, limit):
     tf_map = {
         '1m':'1m', '3m':'3m', '5m':'5m', '15m':'15m',
@@ -86,10 +90,8 @@ def _bitget_veri(sembol, timeframe, limit):
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
         data = json.loads(r.read())
-
     if data.get('code') != '00000':
         raise Exception(f"Bitget hata: {data.get('msg')}")
-
     bars = data['data']
     rows = []
     for b in bars:
@@ -124,7 +126,6 @@ def _kraken_veri(sembol, timeframe, limit):
 def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=500) -> pd.DataFrame:
     sembol    = sembol    or cfg.SEMBOL
     timeframe = timeframe or cfg.TIMEFRAME
-
     kaynaklar = [
         ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
         ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
@@ -142,6 +143,10 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=500) -> pd.DataFra
             time.sleep(1)
     raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
 
+# ─────────────────────────────────────────────────────────────
+# POZİSYON SORGULAMA
+# ─────────────────────────────────────────────────────────────
+
 def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
     try:
@@ -153,7 +158,7 @@ def acik_pozisyon_var_mi(client=None, sembol=None) -> bool:
             return False
         pozlar = r.get('data', [])
         for p in pozlar:
-            if p.get('symbol') == sembol and float(p.get('total', 0)) > 0:
+            if p.get('symbol', '').upper() == sembol.upper() and float(p.get('total', 0)) > 0:
                 log.info(f"Açık pozisyon: {p['holdSide']} {p['total']} @ {p.get('openPriceAvg', 0)}")
                 return True
         return False
@@ -172,7 +177,7 @@ def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
             return None
         pozlar = r.get('data', [])
         for p in pozlar:
-            if p.get('symbol') == sembol and float(p.get('total', 0)) > 0:
+            if p.get('symbol', '').upper() == sembol.upper() and float(p.get('total', 0)) > 0:
                 return {
                     'yon':         'LONG' if p['holdSide'] == 'long' else 'SHORT',
                     'miktar':      float(p['total']),
@@ -183,6 +188,10 @@ def pozisyon_bilgisi(client=None, sembol=None) -> dict | None:
     except Exception as e:
         log.error(f"Pozisyon bilgisi exception: {e}")
         return None
+
+# ─────────────────────────────────────────────────────────────
+# EMİR GÖNDERİM
+# ─────────────────────────────────────────────────────────────
 
 def _kaldirac_ayarla(sembol):
     try:
@@ -205,7 +214,6 @@ def _kaldirac_ayarla(sembol):
         log.warning(f"Kaldıraç ayar uyarısı: {e}")
 
 def _miktar_hesapla(fiyat):
-    """USDT miktarını kontrat sayısına çevir"""
     miktar = cfg.POZISYON_USDT / fiyat
     if fiyat < 1:
         return int(round(miktar, 0))
@@ -218,12 +226,9 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
     sembol = sembol or cfg.SEMBOL
     yon    = sinyal['yon']
     fiyat  = sinyal['fiyat']
-    sl     = sinyal['sl']
-    tp     = sinyal['tp']
 
     if cfg.TEST_MODU:
-        log.info(f"[TEST] {yon} {sembol} @ {fiyat:.4f} | "
-                 f"SL:{sl:.4f} | Kaldıraç:{cfg.KALDIRAC}x")
+        log.info(f"[TEST] {yon} {sembol} @ {fiyat:.4f} | Kaldıraç:{cfg.KALDIRAC}x")
         return True
 
     try:
@@ -247,57 +252,7 @@ def emir_gonder(client=None, sinyal: dict = None, sembol=None) -> bool:
         if r.get('code') != '00000':
             log.error(f"Market emir hatası: kod={r.get('code')} msg={r.get('msg')} tam={r}")
             return False
-        log.info(f"Market emir OK: {r['data'].get('orderId')}")
-        log.info("Pozisyon işlenmesi bekleniyor: 10 saniye...")
-        time.sleep(10)
-
-        holdSide = 'long' if yon == 'LONG' else 'short'
-
-        # Stop-Loss
-        try:
-            sl_body = {
-                'symbol':        sembol.lower(),
-                'productType':   'usdt-futures',
-                'marginCoin':    'USDT',
-                'planType':      'loss_plan',
-                'triggerPrice':  str(round(sl, 4)),
-                'triggerType':   'mark_price',
-                'executePrice':  '0',
-                'holdSide':      holdSide,
-                'size':          str(miktar),
-            }
-            log.info(f"SL gönderiliyor: {sl_body}")
-            r_sl = _post('/api/v2/mix/order/place-tpsl-order', sl_body)
-            if r_sl.get('code') != '00000':
-                log.warning(f"SL uyarısı: kod={r_sl.get('code')} msg={r_sl.get('msg')} tam={r_sl}")
-            else:
-                log.info(f"Stop-Loss ayarlandı: {sl} ✅")
-        except Exception as e:
-            log.error(f"SL exception: {e}")
-
-        # Take-Profit
-        if tp:
-            try:
-                tp_body = {
-                    'symbol':        sembol.lower(),
-                    'productType':   'usdt-futures',
-                    'marginCoin':    'USDT',
-                    'planType':      'profit_plan',
-                    'triggerPrice':  str(round(tp, 4)),
-                    'triggerType':   'mark_price',
-                    'executePrice':  '0',
-                    'holdSide':      holdSide,
-                    'size':          str(miktar),
-                }
-                log.info(f"TP gönderiliyor: {tp_body}")
-                r_tp = _post('/api/v2/mix/order/place-tpsl-order', tp_body)
-                if r_tp.get('code') != '00000':
-                    log.warning(f"TP uyarısı: kod={r_tp.get('code')} msg={r_tp.get('msg')} tam={r_tp}")
-                else:
-                    log.info(f"Take-Profit ayarlandı: {tp} ✅")
-            except Exception as e:
-                log.error(f"TP exception: {e}")
-
+        log.info(f"Market emir OK: {r['data'].get('orderId')} ✅")
         return True
 
     except Exception as e:
