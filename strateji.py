@@ -215,7 +215,7 @@ def pmax_ters_mi(df: pd.DataFrame, mevcut_yon: str) -> bool:
     low   = df['low'].values
 
     atr          = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    var          = hesapla_var(close, cfg.EMA_PERIOD)
+    var          = hesapla_ema(close, cfg.EMA_PERIOD)
     _, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
     simdi_bull = pmax_bull[-1]
@@ -243,7 +243,7 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     n     = len(close)
 
     atr                  = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    var                  = hesapla_var(close, cfg.EMA_PERIOD)
+    var                  = hesapla_ema(close, cfg.EMA_PERIOD)
     pmax_line, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
     ph = deque(maxlen=cfg.PIVOT_COUNT)
