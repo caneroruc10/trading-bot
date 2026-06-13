@@ -35,7 +35,7 @@ def durum_raporu():
 
         import numpy as np
         from collections import deque
-        from strateji import (hesapla_atr, hesapla_ema, hesapla_pmax,
+        from strateji import (hesapla_atr, hesapla_var, hesapla_pmax,
                               pivot_yuksek_mi, pivot_alcak_mi,
                               fiyat_yapisi_puani, volatilite_puani,
                               rejim_hesapla)
@@ -44,9 +44,9 @@ def durum_raporu():
         high  = df['high'].values
         low   = df['low'].values
 
-        atr      = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-        ema      = hesapla_ema(close, cfg.EMA_PERIOD)
-        pmax_line, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
+        atr            = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+        var            = hesapla_var(close, cfg.EMA_PERIOD)
+        pmax_line, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
         ph = deque(maxlen=cfg.PIVOT_COUNT)
         pl = deque(maxlen=cfg.PIVOT_COUNT)
@@ -122,7 +122,6 @@ def kontrol_et():
             log.info(f"Açık pozisyon: {poz['yon']} K/Z:{poz['kar_zarar']:+.2f}")
 
             if cfg.TEST_MODU:
-                # Test modunda sadece PMAX durumunu logla
                 sinyal = strateji.sinyal_uret(df)
                 if sinyal and sinyal['yon'] != poz['yon']:
                     log.info(f"[TEST] PMAX ters döndü — {poz['yon']} kapatılacaktı, {sinyal['yon']} açılacaktı")
