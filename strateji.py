@@ -48,21 +48,12 @@ def hesapla_ema(close, period):
 
 def hesapla_var(close, period):
     """
-    VAR — Variable Index Dynamic Average (Pine Script ile birebir aynı mantık)
-    
-    Çalışma prensibi:
-      - CMO (Chande Momentum Oscillator) ile trendin gücünü ölçer
-      - Güçlü trendde: alpha yükselir → fiyata hızlı yaklaşır
-      - Yatay piyasada: alpha düşer → yavaş hareket eder, gürültüyü filtreler
-    
-    Parametreler:
-      close  : fiyat dizisi (numpy array)
-      period : EMA_PERIOD ile aynı değer kullanılır
+    VAR — Variable Index Dynamic Average
+    Güçlü trendde hızlanır, yatay piyasada yavaşlar.
     """
     n      = len(close)
     valpha = 2.0 / (period + 1)
 
-    # Yukarı / aşağı hareketler
     vud = np.zeros(n)
     vdd = np.zeros(n)
     for i in range(1, n):
@@ -73,7 +64,6 @@ def hesapla_var(close, period):
             vdd[i] = -diff
 
     var = np.zeros(n)
-    # İlk 9 bar için warmup: fiyatı doğrudan ata
     for i in range(min(9, n)):
         var[i] = close[i]
 
@@ -82,16 +72,12 @@ def hesapla_var(close, period):
         vDD   = np.sum(vdd[i-9:i])
         denom = vUD + vDD
         vCMO  = (vUD - vDD) / denom if denom > 0 else 0.0
-        # Pine: VAR := nz(valpha*abs(vCMO)*src) + (1 - valpha*abs(vCMO))*nz(VAR[1])
         var[i] = (valpha * abs(vCMO) * close[i]
                   + (1.0 - valpha * abs(vCMO)) * var[i - 1])
 
     return var
 
 def hesapla_pmax(close, ma, atr, coeff):
-    """
-    PMAX hesabı — ma parametresi EMA ya da VAR olabilir (Pine ile aynı mantık)
-    """
     n     = len(close)
     upper = ma + coeff * atr
     lower = ma - coeff * atr
@@ -124,17 +110,38 @@ def pivot_alcak_mi(low, i, left, right):
     return True
 
 def fiyat_yapisi_puani(pivot_highs, pivot_lows, bull_yon):
+    """
+    Pivot listesi appendleft ile doldurulur:
+      index 0 = en yeni pivot
+      index 1 = bir önceki pivot
+
+    BULL yapısı: HH (yeni > eski) ve HL (yeni > eski)
+    BEAR yapısı: LH (yeni < eski) ve LL (yeni < eski)
+    """
     hh = lh = hl = ll = 0
-    for i in range(len(pivot_highs)-1):
-        if pivot_highs[i] > pivot_highs[i+1]: hh += 1
-        else: lh += 1
-    for i in range(len(pivot_lows)-1):
-        if pivot_lows[i] > pivot_lows[i+1]: hl += 1
-        else: ll += 1
-    max_pairs = max(len(pivot_highs)-1, 1) + max(len(pivot_lows)-1, 1)
-    bull = ((hh+hl)/max_pairs)*50 if max_pairs > 0 else 0
-    bear = ((lh+ll)/max_pairs)*50 if max_pairs > 0 else 0
-    return bull if bull_yon else bear
+
+    for i in range(len(pivot_highs) - 1):
+        # pivot_highs[i] = yeni, pivot_highs[i+1] = eski
+        if pivot_highs[i] > pivot_highs[i+1]:
+            hh += 1   # Higher High — bull yapı
+        else:
+            lh += 1   # Lower High  — bear yapı
+
+    for i in range(len(pivot_lows) - 1):
+        # pivot_lows[i] = yeni, pivot_lows[i+1] = eski
+        if pivot_lows[i] > pivot_lows[i+1]:
+            hl += 1   # Higher Low  — bull yapı
+        else:
+            ll += 1   # Lower Low   — bear yapı
+
+    toplam = max(len(pivot_highs)-1, 0) + max(len(pivot_lows)-1, 0)
+    if toplam == 0:
+        return 0
+
+    if bull_yon:
+        return ((hh + hl) / toplam) * 50
+    else:
+        return ((lh + ll) / toplam) * 50
 
 def volatilite_puani(atr_val, fiyat):
     if fiyat <= 0: return 0
@@ -203,17 +210,12 @@ def rejim_hesapla(close_arr, pencere=168):
 # ─────────────────────────────────────────────────────────────
 
 def pmax_ters_mi(df: pd.DataFrame, mevcut_yon: str) -> bool:
-    """
-    Mevcut pozisyon yönüne göre PMAX ters döndü mü kontrol eder.
-    LONG pozisyonda PMAX BEAR'a geçtiyse → True
-    SHORT pozisyonda PMAX BULL'a geçtiyse → True
-    """
     close = df['close'].values
     high  = df['high'].values
     low   = df['low'].values
 
     atr          = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    var          = hesapla_var(close, cfg.EMA_PERIOD)          # EMA → VAR
+    var          = hesapla_var(close, cfg.EMA_PERIOD)
     _, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
     simdi_bull = pmax_bull[-1]
@@ -241,7 +243,7 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     n     = len(close)
 
     atr                  = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    var                  = hesapla_var(close, cfg.EMA_PERIOD)          # EMA → VAR
+    var                  = hesapla_var(close, cfg.EMA_PERIOD)
     pmax_line, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
 
     ph = deque(maxlen=cfg.PIVOT_COUNT)
@@ -295,8 +297,8 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
 
     trail_pct = round((giris_atr * cfg.TRAIL_STOP_ATR / giris_fiyat) * 100, 2)
 
-    log.info(f"✅ SİNYAL: {yon} @ {giris_fiyat:.2f} | "
-             f"SL:{sl:.2f} | TP:{tp} | Trail:%{trail_pct} | "
+    log.info(f"✅ SİNYAL: {yon} @ {giris_fiyat:.4f} | "
+             f"SL:{sl:.4f} | TP:{tp} | Trail:%{trail_pct} | "
              f"Rejim:{rejim} | Skor:{trend_skoru:.1f}")
 
     return {
