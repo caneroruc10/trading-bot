@@ -35,7 +35,7 @@ def durum_raporu():
 
         import numpy as np
         from collections import deque
-        from strateji import (hesapla_atr, hesapla_ema, hesapla_pmax,
+        from strateji import (hesapla_atr, hesapla_pmax, _ma_hesapla,
                               pivot_yuksek_mi, pivot_alcak_mi,
                               fiyat_yapisi_puani, volatilite_puani,
                               rejim_hesapla)
@@ -43,10 +43,12 @@ def durum_raporu():
         close = df['close'].values
         high  = df['high'].values
         low   = df['low'].values
+        src   = (high + low) / 2  # hl2 — Pine Script gibi
 
-        atr                  = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-        ema                  = hesapla_ema(close, cfg.EMA_PERIOD)
-        pmax_line, pmax_bull = hesapla_pmax(close, ema, atr, cfg.COEFFICIENT)
+        atr                      = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+        ma_tipi                  = getattr(cfg, 'MA_TIPI', 'EMA')
+        ma                       = _ma_hesapla(src, cfg.EMA_PERIOD, ma_tipi)
+        pmax_line, pmax_bull, _  = hesapla_pmax(src, ma, atr, cfg.COEFFICIENT)
 
         ph = deque(maxlen=cfg.PIVOT_COUNT)
         pl = deque(maxlen=cfg.PIVOT_COUNT)
