@@ -2,13 +2,7 @@
 Strateji Modülü
 ===============
 PMAX + Trend Skoru + Rejim Filtresi
-
-Giriş : OHLCV DataFrame
-Çıkış : Sinyal dict veya None
-
-Değişiklik: EMA → VAR (Variable Index Dynamic Average)
-  - Yatay piyasada yavaşlar → daha az sahte sinyal
-  - Trend piyasasında hızlanır → geç kalma azalır
+Pine Script ile birebir aynı PMAX hesabı
 """
 
 import numpy as np
@@ -25,6 +19,7 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 
 def hesapla_atr(high, low, close, period):
+    """Wilder ATR — Pine Script atr() ile aynı"""
     n = len(close)
     tr = np.zeros(n)
     tr[0] = high[0] - low[0]
@@ -38,58 +33,104 @@ def hesapla_atr(high, low, close, period):
         atr[i] = (atr[i-1]*(period-1) + tr[i]) / period
     return atr
 
-def hesapla_ema(close, period):
-    ema = np.zeros(len(close))
-    ema[period-1] = np.mean(close[:period])
+def hesapla_ema(src, period):
+    """EMA — Pine Script ema() ile aynı"""
+    ema = np.zeros(len(src))
+    ema[period-1] = np.mean(src[:period])
     k = 2 / (period+1)
-    for i in range(period, len(close)):
-        ema[i] = close[i]*k + ema[i-1]*(1-k)
+    for i in range(period, len(src)):
+        ema[i] = src[i]*k + ema[i-1]*(1-k)
     return ema
 
-def hesapla_var(close, period):
+def hesapla_var(src, period):
+    """VAR — Pine Script VAR ile birebir aynı
+    src = hl2 (Pine'daki gibi)
     """
-    VAR — Variable Index Dynamic Average
-    Güçlü trendde hızlanır, yatay piyasada yavaşlar.
-    """
-    n      = len(close)
+    n = len(src)
     valpha = 2.0 / (period + 1)
 
-    vud = np.zeros(n)
-    vdd = np.zeros(n)
+    vud1 = np.zeros(n)
+    vdd1 = np.zeros(n)
     for i in range(1, n):
-        diff = close[i] - close[i - 1]
-        if diff > 0:
-            vud[i] = diff
+        if src[i] > src[i-1]:
+            vud1[i] = src[i] - src[i-1]
         else:
-            vdd[i] = -diff
+            vdd1[i] = src[i-1] - src[i]
 
     var = np.zeros(n)
-    for i in range(min(9, n)):
-        var[i] = close[i]
-
-    for i in range(9, n):
-        vUD   = np.sum(vud[i-9:i])
-        vDD   = np.sum(vdd[i-9:i])
+    for i in range(n):
+        # Pine: vUD=sum(vud1,9), vDD=sum(vdd1,9)
+        start = max(0, i-8)
+        vUD = np.sum(vud1[start:i+1])
+        vDD = np.sum(vdd1[start:i+1])
         denom = vUD + vDD
-        vCMO  = (vUD - vDD) / denom if denom > 0 else 0.0
-        var[i] = (valpha * abs(vCMO) * close[i]
-                  + (1.0 - valpha * abs(vCMO)) * var[i - 1])
-
+        vCMO = (vUD - vDD) / denom if denom > 0 else 0.0
+        if i == 0:
+            var[i] = valpha * abs(vCMO) * src[i]
+        else:
+            var[i] = (valpha * abs(vCMO) * src[i] +
+                      (1.0 - valpha * abs(vCMO)) * var[i-1])
     return var
 
-def hesapla_pmax(close, ma, atr, coeff):
-    n     = len(close)
-    upper = ma + coeff * atr
-    lower = ma - coeff * atr
-    pmax  = np.zeros(n)
-    pmax[0] = close[0]
-    for i in range(1, n):
-        if close[i] > pmax[i-1]:
-            pmax[i] = max(lower[i], pmax[i-1])
+def hesapla_pmax(src, ma, atr, coeff):
+    """
+    PMAX — Pine Script mantığıyla birebir aynı
+    
+    Pine Script:
+        longStop = MAvg - Multiplier*atr
+        longStopPrev = nz(longStop[1], longStop)
+        longStop = MAvg > longStopPrev ? max(longStop, longStopPrev) : longStop
+        
+        shortStop = MAvg + Multiplier*atr
+        shortStopPrev = nz(shortStop[1], shortStop)
+        shortStop = MAvg < shortStopPrev ? min(shortStop, shortStopPrev) : shortStop
+        
+        dir = 1
+        dir = dir==-1 and MAvg > shortStopPrev ? 1 : dir==1 and MAvg < longStopPrev ? -1 : dir
+        PMax = dir==1 ? longStop : shortStop
+    """
+    n = len(src)
+    longStop  = np.zeros(n)
+    shortStop = np.zeros(n)
+    direction = np.ones(n, dtype=int)
+    pmax      = np.zeros(n)
+
+    for i in range(n):
+        ls = ma[i] - coeff * atr[i]
+        ss = ma[i] + coeff * atr[i]
+
+        if i == 0:
+            longStop[i]  = ls
+            shortStop[i] = ss
+            direction[i] = 1
         else:
-            pmax[i] = min(upper[i], pmax[i-1])
+            # longStop
+            lsprev = longStop[i-1]
+            if ma[i] > lsprev:
+                longStop[i] = max(ls, lsprev)
+            else:
+                longStop[i] = ls
+
+            # shortStop
+            ssprev = shortStop[i-1]
+            if ma[i] < ssprev:
+                shortStop[i] = min(ss, ssprev)
+            else:
+                shortStop[i] = ss
+
+            # direction
+            prev_dir = direction[i-1]
+            if prev_dir == -1 and ma[i] > shortStop[i-1]:
+                direction[i] = 1
+            elif prev_dir == 1 and ma[i] < longStop[i-1]:
+                direction[i] = -1
+            else:
+                direction[i] = prev_dir
+
+        pmax[i] = longStop[i] if direction[i] == 1 else shortStop[i]
+
     pmax_bull = ma > pmax
-    return pmax, pmax_bull
+    return pmax, pmax_bull, direction
 
 def pivot_yuksek_mi(high, i, left, right):
     if i < left or i+right >= len(high): return False
@@ -110,34 +151,15 @@ def pivot_alcak_mi(low, i, left, right):
     return True
 
 def fiyat_yapisi_puani(pivot_highs, pivot_lows, bull_yon):
-    """
-    Pivot listesi appendleft ile doldurulur:
-      index 0 = en yeni pivot
-      index 1 = bir önceki pivot
-
-    BULL yapısı: HH (yeni > eski) ve HL (yeni > eski)
-    BEAR yapısı: LH (yeni < eski) ve LL (yeni < eski)
-    """
     hh = lh = hl = ll = 0
-
-    for i in range(len(pivot_highs) - 1):
-        # pivot_highs[i] = yeni, pivot_highs[i+1] = eski
-        if pivot_highs[i] > pivot_highs[i+1]:
-            hh += 1   # Higher High — bull yapı
-        else:
-            lh += 1   # Lower High  — bear yapı
-
-    for i in range(len(pivot_lows) - 1):
-        # pivot_lows[i] = yeni, pivot_lows[i+1] = eski
-        if pivot_lows[i] > pivot_lows[i+1]:
-            hl += 1   # Higher Low  — bull yapı
-        else:
-            ll += 1   # Lower Low   — bear yapı
-
+    for i in range(len(pivot_highs)-1):
+        if pivot_highs[i] > pivot_highs[i+1]: hh += 1
+        else: lh += 1
+    for i in range(len(pivot_lows)-1):
+        if pivot_lows[i] > pivot_lows[i+1]: hl += 1
+        else: ll += 1
     toplam = max(len(pivot_highs)-1, 0) + max(len(pivot_lows)-1, 0)
-    if toplam == 0:
-        return 0
-
+    if toplam == 0: return 0
     if bull_yon:
         return ((hh + hl) / toplam) * 50
     else:
@@ -157,19 +179,14 @@ def rejim_hesapla(close_arr, pencere=168):
     n = len(close_arr)
     if n < pencere + 10:
         return 'Bilinmiyor'
-
     log_r = np.diff(np.log(close_arr + 1e-12))
-
     vol = []
     for i in range(pencere, len(log_r)+1):
         vol.append(np.std(log_r[i-pencere:i]) * np.sqrt(24*365))
     vol = np.array(vol)
-
     if len(vol) < 10:
         return 'Bilinmiyor'
-
     log_vol = np.log(vol + 1e-9)
-
     q33, q67 = np.percentile(log_vol, [33, 67])
     mu    = np.array([np.mean(log_vol[log_vol < q33]),
                       np.mean(log_vol[(log_vol>=q33)&(log_vol<q67)]),
@@ -177,33 +194,36 @@ def rejim_hesapla(close_arr, pencere=168):
     sigma = np.array([max(np.std(log_vol[log_vol < q33]), 0.01),
                       max(np.std(log_vol[(log_vol>=q33)&(log_vol<q67)]), 0.01),
                       max(np.std(log_vol[log_vol >= q67]), 0.01)])
-    pi    = np.ones(3) / 3
-
+    pi = np.ones(3) / 3
     for _ in range(100):
-        resp  = np.column_stack([pi[k]*norm.pdf(log_vol, mu[k], sigma[k])
-                                 for k in range(3)])
+        resp  = np.column_stack([pi[k]*norm.pdf(log_vol, mu[k], sigma[k]) for k in range(3)])
         resp  = resp / (resp.sum(axis=1, keepdims=True) + 1e-12)
         Nk    = resp.sum(axis=0)
         pi    = Nk / len(log_vol)
         mu    = (resp * log_vol[:,None]).sum(axis=0) / Nk
         sigma = np.sqrt((resp * (log_vol[:,None]-mu)**2).sum(axis=0) / Nk)
         sigma = np.maximum(sigma, 0.01)
-
     son_vol     = log_vol[-1]
     olasliklar  = np.array([pi[k]*norm.pdf(son_vol, mu[k], sigma[k]) for k in range(3)])
     olasliklar /= olasliklar.sum()
-    rejim_idx   = np.argmax(olasliklar)
-
     sirali      = np.argsort(mu)
     isim_map    = {sirali[0]:'Sakin', sirali[1]:'Geçiş', sirali[2]:'Kriz'}
-    rejim       = isim_map[rejim_idx]
-
+    rejim       = isim_map[np.argmax(olasliklar)]
     log.info(f"Rejim: {rejim} | Vol: %{vol[-1]*100:.1f} | "
              f"Sakin:%{olasliklar[sirali[0]]*100:.0f} "
              f"Geçiş:%{olasliklar[sirali[1]]*100:.0f} "
              f"Kriz:%{olasliklar[sirali[2]]*100:.0f}")
-
     return rejim
+
+# ─────────────────────────────────────────────────────────────
+# MA SEÇİMİ — config'den gelen MA tipine göre
+# ─────────────────────────────────────────────────────────────
+
+def _ma_hesapla(src, period, ma_tipi='EMA'):
+    if ma_tipi == 'VAR':
+        return hesapla_var(src, period)
+    else:
+        return hesapla_ema(src, period)
 
 # ─────────────────────────────────────────────────────────────
 # PMAX TERS DÖNÜŞ TESPİTİ
@@ -213,10 +233,12 @@ def pmax_ters_mi(df: pd.DataFrame, mevcut_yon: str) -> bool:
     close = df['close'].values
     high  = df['high'].values
     low   = df['low'].values
+    src   = (high + low) / 2  # Pine: src = hl2
 
-    atr          = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    var          = hesapla_ema(close, cfg.EMA_PERIOD)
-    _, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
+    atr           = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+    ma_tipi       = getattr(cfg, 'MA_TIPI', 'EMA')
+    ma            = _ma_hesapla(src, cfg.EMA_PERIOD, ma_tipi)
+    _, pmax_bull, _ = hesapla_pmax(src, ma, atr, cfg.COEFFICIENT)
 
     simdi_bull = pmax_bull[-1]
 
@@ -241,10 +263,12 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     high  = df['high'].values
     low   = df['low'].values
     n     = len(close)
+    src   = (high + low) / 2  # Pine: src = hl2
 
-    atr                  = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    var                  = hesapla_ema(close, cfg.EMA_PERIOD)
-    pmax_line, pmax_bull = hesapla_pmax(close, var, atr, cfg.COEFFICIENT)
+    atr               = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+    ma_tipi           = getattr(cfg, 'MA_TIPI', 'EMA')
+    ma                = _ma_hesapla(src, cfg.EMA_PERIOD, ma_tipi)
+    pmax_line, pmax_bull, direction = hesapla_pmax(src, ma, atr, cfg.COEFFICIENT)
 
     ph = deque(maxlen=cfg.PIVOT_COUNT)
     pl = deque(maxlen=cfg.PIVOT_COUNT)
@@ -266,7 +290,7 @@ def sinyal_uret(df: pd.DataFrame) -> dict | None:
     log.info(f"Trend skoru: {trend_skoru:.1f}/100 "
              f"(Yapı:{ss:.1f} Vol:{vs:.1f}) | "
              f"PMAX: {'BULL' if pmax_bull[-1] else 'BEAR'} | "
-             f"ATR: {atr[-1]:.2f} | MA: VAR({cfg.EMA_PERIOD})")
+             f"ATR: {atr[-1]:.2f} | MA: {ma_tipi}({cfg.EMA_PERIOD}) | src=hl2")
 
     if trend_skoru < cfg.SCORE_THRESH:
         log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
