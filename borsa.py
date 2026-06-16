@@ -164,22 +164,39 @@ def _kraken_veri(sembol, timeframe, limit):
 def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFrame:
     sembol    = sembol    or cfg.SEMBOL
     timeframe = timeframe or cfg.TIMEFRAME
-    kaynaklar = [
-        ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
-        ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
-    ]
-    son_hata = None
-    for ad, fn in kaynaklar:
-        try:
-            df = fn()
-            log.info(f"Veri çekildi ({ad}): {len(df)} bar | "
-                     f"{df.index[0]} → {df.index[-1]}")
-            return df
-        except Exception as e:
-            log.warning(f"{ad} başarısız: {e}")
-            son_hata = e
-            time.sleep(1)
-    raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
+    son_hata  = None
+
+    df_bitget = None
+    df_kraken = None
+
+    try:
+        df_bitget = _bitget_veri(sembol, timeframe, limit)
+    except Exception as e:
+        log.warning(f"Bitget başarısız: {e}")
+        son_hata = e
+
+    try:
+        df_kraken = _kraken_veri(sembol, timeframe, limit)
+    except Exception as e:
+        log.warning(f"Kraken başarısız: {e}")
+        son_hata = e
+
+    if df_bitget is not None and df_kraken is not None:
+        # Kraken eskiyi, Bitget yeniyi sağlar — birleştir
+        kesim = df_bitget.index[0]
+        df_eski = df_kraken[df_kraken.index < kesim]
+        df = pd.concat([df_eski, df_bitget]).sort_index()
+        df = df[~df.index.duplicated(keep='last')]
+        log.info(f"Veri birleştirildi: {len(df)} bar | {df.index[0]} → {df.index[-1]}")
+        return df
+    elif df_bitget is not None:
+        log.info(f"Veri çekildi (Bitget): {len(df_bitget)} bar | {df_bitget.index[0]} → {df_bitget.index[-1]}")
+        return df_bitget
+    elif df_kraken is not None:
+        log.info(f"Veri çekildi (Kraken): {len(df_kraken)} bar | {df_kraken.index[0]} → {df_kraken.index[-1]}")
+        return df_kraken
+    else:
+        raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
 
 # ─────────────────────────────────────────────────────────────
 # POZİSYON SORGULAMA
