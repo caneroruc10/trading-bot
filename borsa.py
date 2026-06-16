@@ -88,26 +88,27 @@ def _bitget_veri(sembol, timeframe, limit):
         '6h':'6H', '12h':'12H', '1d':'1D',
     }
     bg_tf = tf_map.get(timeframe, '1H')
-    
-    # Birden fazla istek atarak yeterli bar topla
+
+    from datetime import timezone, timedelta
+    simdi_dt = datetime.now(timezone.utc)
     tum_rows = []
-    end_time = None
-    hedef = max(limit, 500)
-    
-    for _ in range(5):  # maksimum 5 istek
+
+    # Her dönem 30 günlük, 5 dönem = 150 gün yeterli
+    for ay in range(5):
+        bitis    = simdi_dt - timedelta(days=ay*30)
+        baslangic = simdi_dt - timedelta(days=(ay+1)*30)
+        st = int(baslangic.timestamp() * 1000)
+        et = int(bitis.timestamp() * 1000)
         url = (f"https://api.bitget.com/api/v2/mix/market/candles"
                f"?symbol={sembol}&granularity={bg_tf}"
-               f"&limit=200&productType=usdt-futures")
-        if end_time:
-            url += f"&endTime={end_time}"
+               f"&limit=200&productType=usdt-futures"
+               f"&startTime={st}&endTime={et}")
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
             data = json.loads(r.read())
         if data.get('code') != '00000':
             raise Exception(f"Bitget hata: {data.get('msg')}")
         bars = data['data']
-        if not bars:
-            break
         rows = []
         for b in bars:
             rows.append({
@@ -119,16 +120,13 @@ def _bitget_veri(sembol, timeframe, limit):
                 'volume': float(b[5]),
             })
         tum_rows = rows + tum_rows
-        end_time = bars[-1][0]  # en eski barın timestamp
         time.sleep(0.3)
-        if len(tum_rows) >= hedef:
-            break
-    
+
     df = pd.DataFrame(tum_rows).set_index('timestamp').sort_index()
     df = df[~df.index.duplicated(keep='last')]
     # Kapanmamış barı at
-    simdi = pd.Timestamp.utcnow().tz_localize(None)
-    df = df[df.index < simdi]
+    simdi_ts = pd.Timestamp.utcnow().tz_localize(None)
+    df = df[df.index < simdi_ts]
     return df[['open','high','low','close','volume']]
 
 def _kraken_veri(sembol, timeframe, limit):
