@@ -164,14 +164,20 @@ def _yahoo_veri(sembol, timeframe):
             continue
     df = pd.DataFrame(rows).set_index('timestamp').sort_index()
     df = df[df['close'] > 0]
-    # 4H'e resample et
+    # Gerekli timeframe'e resample et
     if timeframe in ['4h', '4H']:
         df = df.resample('4h').agg({
             'open': 'first', 'high': 'max',
             'low': 'min', 'close': 'last', 'volume': 'sum'
         }).dropna()
-    # Kapanmamış barı at
-    simdi_ts = pd.Timestamp.utcnow().tz_localize(None)
+    elif timeframe in ['1d', '1D']:
+        df = df.resample('1D').agg({
+            'open': 'first', 'high': 'max',
+            'low': 'min', 'close': 'last', 'volume': 'sum'
+        }).dropna()
+    # 1H icin resample gerekmez
+    # Kapanmamis bari at
+    simdi_ts = pd.Timestamp.now('UTC').tz_localize(None)
     df = df[df.index < simdi_ts]
     return df[['open','high','low','close','volume']]
 
