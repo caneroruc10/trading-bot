@@ -131,6 +131,50 @@ def _bitget_veri(sembol, timeframe, limit):
     df = df[df.index < simdi_ts]
     return df[['open','high','low','close','volume']]
 
+def _yahoo_veri(sembol, timeframe):
+    """Yahoo Finance'den 1H veri çek, sonra 4H'e resample et"""
+    from datetime import timezone, timedelta
+    yahoo_map = {
+        'BTCUSDT': 'BTC-USD', 'ETHUSDT': 'ETH-USD',
+        'XRPUSDT': 'XRP-USD', 'SUIUSDT': 'SUI-USD',
+    }
+    yahoo_sembol = yahoo_map.get(sembol.upper(), sembol.replace('USDT', '-USD'))
+    simdi = int(datetime.now(timezone.utc).timestamp())
+    baslangic = int((datetime.now(timezone.utc) - timedelta(days=200)).timestamp())
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sembol}"
+           f"?interval=1h&period1={baslangic}&period2={simdi}")
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+        data = json.loads(r.read())
+    result = data['chart']['result'][0]
+    timestamps = result['timestamp']
+    ohlcv = result['indicators']['quote'][0]
+    rows = []
+    for i, ts in enumerate(timestamps):
+        try:
+            rows.append({
+                'timestamp': pd.Timestamp(ts, unit='s'),
+                'open':   float(ohlcv['open'][i] or 0),
+                'high':   float(ohlcv['high'][i] or 0),
+                'low':    float(ohlcv['low'][i] or 0),
+                'close':  float(ohlcv['close'][i] or 0),
+                'volume': float(ohlcv['volume'][i] or 0),
+            })
+        except (TypeError, ValueError):
+            continue
+    df = pd.DataFrame(rows).set_index('timestamp').sort_index()
+    df = df[df['close'] > 0]
+    # 4H'e resample et
+    if timeframe in ['4h', '4H']:
+        df = df.resample('4h').agg({
+            'open': 'first', 'high': 'max',
+            'low': 'min', 'close': 'last', 'volume': 'sum'
+        }).dropna()
+    # Kapanmamış barı at
+    simdi_ts = pd.Timestamp.utcnow().tz_localize(None)
+    df = df[df.index < simdi_ts]
+    return df[['open','high','low','close','volume']]
+
 def _kraken_veri(sembol, timeframe, limit):
     tf_map = {'1m':1,'5m':5,'15m':15,'30m':30,'1h':60,'4h':240,'1d':1440}
     interval = tf_map.get(timeframe, 60)
@@ -167,7 +211,7 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFr
     son_hata  = None
 
     df_bitget = None
-    df_kraken = None
+    df_yahoo  = None
 
     try:
         df_bitget = _bitget_veri(sembol, timeframe, limit)
@@ -176,15 +220,15 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFr
         son_hata = e
 
     try:
-        df_kraken = _kraken_veri(sembol, timeframe, limit)
+        df_yahoo = _yahoo_veri(sembol, timeframe)
     except Exception as e:
-        log.warning(f"Kraken başarısız: {e}")
+        log.warning(f"Yahoo başarısız: {e}")
         son_hata = e
 
-    if df_bitget is not None and df_kraken is not None:
-        # Kraken eskiyi, Bitget yeniyi sağlar — birleştir
+    if df_bitget is not None and df_yahoo is not None:
+        # Yahoo eskiyi, Bitget yeniyi sağlar — birleştir
         kesim = df_bitget.index[0]
-        df_eski = df_kraken[df_kraken.index < kesim]
+        df_eski = df_yahoo[df_yahoo.index < kesim]
         df = pd.concat([df_eski, df_bitget]).sort_index()
         df = df[~df.index.duplicated(keep='last')]
         log.info(f"Veri birleştirildi: {len(df)} bar | {df.index[0]} → {df.index[-1]}")
@@ -192,9 +236,9 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFr
     elif df_bitget is not None:
         log.info(f"Veri çekildi (Bitget): {len(df_bitget)} bar | {df_bitget.index[0]} → {df_bitget.index[-1]}")
         return df_bitget
-    elif df_kraken is not None:
-        log.info(f"Veri çekildi (Kraken): {len(df_kraken)} bar | {df_kraken.index[0]} → {df_kraken.index[-1]}")
-        return df_kraken
+    elif df_yahoo is not None:
+        log.info(f"Veri çekildi (Yahoo): {len(df_yahoo)} bar | {df_yahoo.index[0]} → {df_yahoo.index[-1]}")
+        return df_yahoo
     else:
         raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
 
