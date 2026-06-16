@@ -130,7 +130,7 @@ def _kraken_veri(sembol, timeframe, limit):
     df = pd.DataFrame(rows).set_index('timestamp')
     return df[['open','high','low','close','volume']].iloc[:-1]
 
-def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=500) -> pd.DataFrame:
+def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFrame:
     sembol    = sembol    or cfg.SEMBOL
     timeframe = timeframe or cfg.TIMEFRAME
     kaynaklar = [
