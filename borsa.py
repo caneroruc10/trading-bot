@@ -132,27 +132,47 @@ def _bitget_veri(sembol, timeframe, limit):
 def _kraken_veri(sembol, timeframe, limit):
     tf_map = {'1m':1,'5m':5,'15m':15,'30m':30,'1h':60,'4h':240,'1d':1440}
     interval = tf_map.get(timeframe, 60)
-    kraken_sembol = 'XETHZUSD' if 'ETH' in sembol else 'XXBTZUSD'
+    if 'ETH' in sembol:
+        kraken_sembol = 'XETHZUSD'
+    elif 'BTC' in sembol or 'XBT' in sembol:
+        kraken_sembol = 'XXBTZUSD'
+    elif 'XRP' in sembol:
+        kraken_sembol = 'XXRPZUSD'
+    elif 'SUI' in sembol:
+        kraken_sembol = 'SUIUSD'
+    else:
+        kraken_sembol = 'XETHZUSD'
     url = (f"https://api.kraken.com/0/public/OHLC"
            f"?pair={kraken_sembol}&interval={interval}")
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
         data = json.loads(r.read())
-    bars = list(data['result'].values())[0][-limit:]
+    bars = list(data['result'].values())[0]
+    # Kapanmamış barı at
+    from datetime import timezone
+    simdi = datetime.now(timezone.utc).timestamp()
+    bars = [b for b in bars if b[0] < simdi]
     rows = [{'timestamp': pd.Timestamp(b[0], unit='s'),
              'open': float(b[1]), 'high': float(b[2]),
              'low': float(b[3]), 'close': float(b[4]),
              'volume': float(b[6])} for b in bars]
-    df = pd.DataFrame(rows).set_index('timestamp')
-    return df[['open','high','low','close','volume']].iloc[:-1]
+    df = pd.DataFrame(rows).set_index('timestamp').sort_index()
+    return df[['open','high','low','close','volume']]
 
 def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFrame:
     sembol    = sembol    or cfg.SEMBOL
     timeframe = timeframe or cfg.TIMEFRAME
-    kaynaklar = [
-        ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
-        ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
-    ]
+    # BTC ve 4H için Kraken önce — Railway'den Bitget 4H verisi kısıtlı
+    if 'BTC' in sembol and timeframe in ['4h', '4H']:
+        kaynaklar = [
+            ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
+            ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
+        ]
+    else:
+        kaynaklar = [
+            ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
+            ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
+        ]
     son_hata = None
     for ad, fn in kaynaklar:
         try:
