@@ -210,37 +210,34 @@ def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFr
     timeframe = timeframe or cfg.TIMEFRAME
     son_hata  = None
 
-    df_bitget = None
-    df_yahoo  = None
-
+    # Önce Yahoo dene — Railway IP kısıtlaması olmadan yeterli geçmiş veri sağlar
     try:
-        df_bitget = _bitget_veri(sembol, timeframe, limit)
-    except Exception as e:
-        log.warning(f"Bitget başarısız: {e}")
-        son_hata = e
-
-    try:
-        df_yahoo = _yahoo_veri(sembol, timeframe)
+        df = _yahoo_veri(sembol, timeframe)
+        log.info(f"Veri çekildi (Yahoo): {len(df)} bar | {df.index[0]} → {df.index[-1]}")
+        return df
     except Exception as e:
         log.warning(f"Yahoo başarısız: {e}")
         son_hata = e
 
-    if df_bitget is not None and df_yahoo is not None:
-        # Yahoo eskiyi, Bitget yeniyi sağlar — birleştir
-        kesim = df_bitget.index[0]
-        df_eski = df_yahoo[df_yahoo.index < kesim]
-        df = pd.concat([df_eski, df_bitget]).sort_index()
-        df = df[~df.index.duplicated(keep='last')]
-        log.info(f"Veri birleştirildi: {len(df)} bar | {df.index[0]} → {df.index[-1]}")
+    # Fallback: Bitget
+    try:
+        df = _bitget_veri(sembol, timeframe, limit)
+        log.info(f"Veri çekildi (Bitget): {len(df)} bar | {df.index[0]} → {df.index[-1]}")
         return df
-    elif df_bitget is not None:
-        log.info(f"Veri çekildi (Bitget): {len(df_bitget)} bar | {df_bitget.index[0]} → {df_bitget.index[-1]}")
-        return df_bitget
-    elif df_yahoo is not None:
-        log.info(f"Veri çekildi (Yahoo): {len(df_yahoo)} bar | {df_yahoo.index[0]} → {df_yahoo.index[-1]}")
-        return df_yahoo
-    else:
-        raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
+    except Exception as e:
+        log.warning(f"Bitget başarısız: {e}")
+        son_hata = e
+
+    # Son fallback: Kraken
+    try:
+        df = _kraken_veri(sembol, timeframe, limit)
+        log.info(f"Veri çekildi (Kraken): {len(df)} bar | {df.index[0]} → {df.index[-1]}")
+        return df
+    except Exception as e:
+        log.warning(f"Kraken başarısız: {e}")
+        son_hata = e
+
+    raise Exception(f"Tüm veri kaynakları başarısız: {son_hata}")
 
 # ─────────────────────────────────────────────────────────────
 # POZİSYON SORGULAMA
