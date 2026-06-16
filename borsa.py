@@ -120,8 +120,10 @@ def _bitget_veri(sembol, timeframe, limit):
                 'volume': float(b[5]),
             })
         tum_rows = rows + tum_rows
+        log.info(f"Bitget dönem {ay+1}: {len(rows)} bar")
         time.sleep(0.3)
 
+    log.info(f"Bitget toplam ham: {len(tum_rows)} bar")
     df = pd.DataFrame(tum_rows).set_index('timestamp').sort_index()
     df = df[~df.index.duplicated(keep='last')]
     # Kapanmamış barı at
@@ -162,17 +164,10 @@ def _kraken_veri(sembol, timeframe, limit):
 def ohlcv_cek(client=None, sembol=None, timeframe=None, limit=1000) -> pd.DataFrame:
     sembol    = sembol    or cfg.SEMBOL
     timeframe = timeframe or cfg.TIMEFRAME
-    # BTC ve 4H için Kraken önce — Railway'den Bitget 4H verisi kısıtlı
-    if 'BTC' in sembol and timeframe in ['4h', '4H']:
-        kaynaklar = [
-            ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
-            ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
-        ]
-    else:
-        kaynaklar = [
-            ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
-            ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
-        ]
+    kaynaklar = [
+        ('Bitget', lambda: _bitget_veri(sembol, timeframe, limit)),
+        ('Kraken', lambda: _kraken_veri(sembol, timeframe, limit)),
+    ]
     son_hata = None
     for ad, fn in kaynaklar:
         try:
