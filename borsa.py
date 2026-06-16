@@ -108,7 +108,10 @@ def _bitget_veri(sembol, timeframe, limit):
             'volume': float(b[5]),
         })
     df = pd.DataFrame(rows).set_index('timestamp').sort_index()
-    return df[['open','high','low','close','volume']].iloc[:-1]
+    # Kapanmamış barı at: şu anki zamandan önce kapanmış barları al
+    simdi = pd.Timestamp.utcnow().tz_localize(None)
+    df = df[df.index < simdi]
+    return df[['open','high','low','close','volume']]
 
 def _kraken_veri(sembol, timeframe, limit):
     tf_map = {'1m':1,'5m':5,'15m':15,'30m':30,'1h':60,'4h':240,'1d':1440}
