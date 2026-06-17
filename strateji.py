@@ -1,25 +1,30 @@
 """
 Strateji Modülü
 ===============
-PMAX + Trend Skoru + Rejim Filtresi
-Pine Script ile birebir aynı PMAX hesabı
+PMAX + Trend Skoru + Fake Sinyal Sayacı (Pine v6 ile birebir)
+
+Mimari:
+- Her kontrolde, geçmiş tüm bar'lar üzerinde state machine sıfırdan çalışır.
+- Pine her bar'ı deterministik olarak yeniden hesapladığı gibi, bot da geçmişten
+  yeniden inşa eder. Bu sayede Railway redeploy'unda state kaybı yoktur.
+- Son bar'ın pozisyon/fake_sayac/esik_asildi/son_sinyal durumu döndürülür.
+- main.py bu durumu borsadaki gerçek pozisyonla karşılaştırıp aksiyon alır.
 """
 
 import numpy as np
 import pandas as pd
 from collections import deque
-from scipy.stats import norm
 import config as cfg
 import logging
 
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────
-# HESAPLAMALAR
+# TEMEL HESAPLAMALAR
 # ─────────────────────────────────────────────────────────────
 
 def hesapla_atr(high, low, close, period):
-    """Wilder ATR — Pine Script atr() ile aynı"""
+    """Wilder ATR — Pine Script ta.atr() ile aynı"""
     n = len(close)
     tr = np.zeros(n)
     tr[0] = high[0] - low[0]
@@ -34,7 +39,7 @@ def hesapla_atr(high, low, close, period):
     return atr
 
 def hesapla_ema(src, period):
-    """EMA — Pine Script ema() ile aynı"""
+    """EMA — Pine Script ta.ema() ile aynı"""
     ema = np.zeros(len(src))
     ema[period-1] = np.mean(src[:period])
     k = 2 / (period+1)
@@ -43,9 +48,7 @@ def hesapla_ema(src, period):
     return ema
 
 def hesapla_var(src, period):
-    """VAR — Pine Script VAR ile birebir aynı
-    src = hl2 (Pine'daki gibi)
-    """
+    """VAR — Pine Script VAR ile birebir aynı (hl2 üzerinde)"""
     n = len(src)
     valpha = 2.0 / (period + 1)
 
@@ -59,7 +62,6 @@ def hesapla_var(src, period):
 
     var = np.zeros(n)
     for i in range(n):
-        # Pine: vUD=sum(vud1,9), vDD=sum(vdd1,9)
         start = max(0, i-8)
         vUD = np.sum(vud1[start:i+1])
         vDD = np.sum(vdd1[start:i+1])
@@ -75,19 +77,7 @@ def hesapla_var(src, period):
 def hesapla_pmax(src, ma, atr, coeff):
     """
     PMAX — Pine Script mantığıyla birebir aynı
-    
-    Pine Script:
-        longStop = MAvg - Multiplier*atr
-        longStopPrev = nz(longStop[1], longStop)
-        longStop = MAvg > longStopPrev ? max(longStop, longStopPrev) : longStop
-        
-        shortStop = MAvg + Multiplier*atr
-        shortStopPrev = nz(shortStop[1], shortStop)
-        shortStop = MAvg < shortStopPrev ? min(shortStop, shortStopPrev) : shortStop
-        
-        dir = 1
-        dir = dir==-1 and MAvg > shortStopPrev ? 1 : dir==1 and MAvg < longStopPrev ? -1 : dir
-        PMax = dir==1 ? longStop : shortStop
+    pmax_bull[i] = (dir[i] == 1)
     """
     n = len(src)
     longStop  = np.zeros(n)
@@ -104,21 +94,18 @@ def hesapla_pmax(src, ma, atr, coeff):
             shortStop[i] = ss
             direction[i] = 1
         else:
-            # longStop
             lsprev = longStop[i-1]
             if ma[i] > lsprev:
                 longStop[i] = max(ls, lsprev)
             else:
                 longStop[i] = ls
 
-            # shortStop
             ssprev = shortStop[i-1]
             if ma[i] < ssprev:
                 shortStop[i] = min(ss, ssprev)
             else:
                 shortStop[i] = ss
 
-            # direction
             prev_dir = direction[i-1]
             if prev_dir == -1 and ma[i] > shortStop[i-1]:
                 direction[i] = 1
@@ -129,7 +116,7 @@ def hesapla_pmax(src, ma, atr, coeff):
 
         pmax[i] = longStop[i] if direction[i] == 1 else shortStop[i]
 
-    pmax_bull = ma > pmax
+    pmax_bull = direction == 1
     return pmax, pmax_bull, direction
 
 def pivot_yuksek_mi(high, i, left, right):
@@ -151,6 +138,7 @@ def pivot_alcak_mi(low, i, left, right):
     return True
 
 def fiyat_yapisi_puani(pivot_highs, pivot_lows, bull_yon):
+    """Pine'daki structScore — 0-50 arası"""
     hh = lh = hl = ll = 0
     for i in range(len(pivot_highs)-1):
         if pivot_highs[i] > pivot_highs[i+1]: hh += 1
@@ -166,58 +154,11 @@ def fiyat_yapisi_puani(pivot_highs, pivot_lows, bull_yon):
         return ((lh + ll) / toplam) * 50
 
 def volatilite_puani(atr_val, fiyat):
+    """Pine'daki volScore — 0-50 arası"""
     if fiyat <= 0: return 0
     atr_pct = (atr_val/fiyat)*100
     score = (atr_pct - cfg.VOL_MIN) / (cfg.VOL_MAX - cfg.VOL_MIN) * 50
     return min(max(score, 0), 50)
-
-# ─────────────────────────────────────────────────────────────
-# REJİM TESPİTİ (GMM)
-# ─────────────────────────────────────────────────────────────
-
-def rejim_hesapla(close_arr, pencere=168):
-    n = len(close_arr)
-    if n < pencere + 10:
-        return 'Bilinmiyor'
-    log_r = np.diff(np.log(close_arr + 1e-12))
-    vol = []
-    for i in range(pencere, len(log_r)+1):
-        vol.append(np.std(log_r[i-pencere:i]) * np.sqrt(24*365))
-    vol = np.array(vol)
-    if len(vol) < 10:
-        return 'Bilinmiyor'
-    log_vol = np.log(vol + 1e-9)
-    q33, q67 = np.percentile(log_vol, [33, 67])
-    mu    = np.array([np.mean(log_vol[log_vol < q33]),
-                      np.mean(log_vol[(log_vol>=q33)&(log_vol<q67)]),
-                      np.mean(log_vol[log_vol >= q67])])
-    sigma = np.array([max(np.std(log_vol[log_vol < q33]), 0.01),
-                      max(np.std(log_vol[(log_vol>=q33)&(log_vol<q67)]), 0.01),
-                      max(np.std(log_vol[log_vol >= q67]), 0.01)])
-    pi = np.ones(3) / 3
-    for _ in range(100):
-        resp  = np.column_stack([pi[k]*norm.pdf(log_vol, mu[k], sigma[k]) for k in range(3)])
-        resp  = resp / (resp.sum(axis=1, keepdims=True) + 1e-12)
-        Nk    = resp.sum(axis=0)
-        pi    = Nk / len(log_vol)
-        mu    = (resp * log_vol[:,None]).sum(axis=0) / Nk
-        sigma = np.sqrt((resp * (log_vol[:,None]-mu)**2).sum(axis=0) / Nk)
-        sigma = np.maximum(sigma, 0.01)
-    son_vol     = log_vol[-1]
-    olasliklar  = np.array([pi[k]*norm.pdf(son_vol, mu[k], sigma[k]) for k in range(3)])
-    olasliklar /= olasliklar.sum()
-    sirali      = np.argsort(mu)
-    isim_map    = {sirali[0]:'Sakin', sirali[1]:'Geçiş', sirali[2]:'Kriz'}
-    rejim       = isim_map[np.argmax(olasliklar)]
-    log.info(f"Rejim: {rejim} | Vol: %{vol[-1]*100:.1f} | "
-             f"Sakin:%{olasliklar[sirali[0]]*100:.0f} "
-             f"Geçiş:%{olasliklar[sirali[1]]*100:.0f} "
-             f"Kriz:%{olasliklar[sirali[2]]*100:.0f}")
-    return rejim
-
-# ─────────────────────────────────────────────────────────────
-# MA SEÇİMİ — config'den gelen MA tipine göre
-# ─────────────────────────────────────────────────────────────
 
 def _ma_hesapla(src, period, ma_tipi='EMA'):
     if ma_tipi == 'VAR':
@@ -226,112 +167,159 @@ def _ma_hesapla(src, period, ma_tipi='EMA'):
         return hesapla_ema(src, period)
 
 # ─────────────────────────────────────────────────────────────
-# PMAX TERS DÖNÜŞ TESPİTİ
+# STATE MACHINE (Pine v6 ile birebir)
 # ─────────────────────────────────────────────────────────────
 
-def pmax_ters_mi(df: pd.DataFrame, mevcut_yon: str) -> bool:
+def durum_makinesini_calistir(df: pd.DataFrame, long_only: bool = False) -> dict:
+    """
+    Pine v6'daki sinyal/pozisyon state machine'ini geçmiş tüm bar'lar üzerinde
+    sıfırdan simüle eder. Son bar'ın durumunu ve aksiyonunu döndürür.
+
+    Returns:
+        pozisyon:    'LONG'|'SHORT'|'YOK'   son bar sonrası bot'a göre olması gereken pozisyon
+        fake_sayac:  int                     son bar sonrası fake sayaç değeri
+        esik_asildi: bool                    fake eşik aşıldı bayrağı
+        son_sinyal:  'AL'|'SAT'|None         son bar'da üretilen sinyal (varsa)
+        zorla_ters:  bool                    son sinyal zorla ters dönüş mü?
+        fiyat:       float                   son bar kapanış
+        atr:         float                   son bar ATR
+        trend_skoru: float                   son bar trend skoru
+        pmax_yon:    'BULL'|'BEAR'           son bar PMAX yönü
+        yapi_skoru:  float
+        vol_skoru:   float
+    """
     close = df['close'].values
     high  = df['high'].values
     low   = df['low'].values
     src   = (high + low) / 2  # Pine: src = hl2
+    n     = len(close)
 
-    atr           = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    ma_tipi       = getattr(cfg, 'MA_TIPI', 'EMA')
-    ma            = _ma_hesapla(src, cfg.EMA_PERIOD, ma_tipi)
+    min_bar = cfg.ATR_PERIOD + cfg.PIVOT_RIGHT + cfg.PIVOT_LEFT + 10
+    if n < min_bar:
+        raise ValueError(f"Yetersiz veri: {n} bar (en az {min_bar} gerek)")
+
+    atr     = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
+    ma_tipi = getattr(cfg, 'MA_TIPI', 'EMA')
+    ma      = _ma_hesapla(src, cfg.EMA_PERIOD, ma_tipi)
     _, pmax_bull, _ = hesapla_pmax(src, ma, atr, cfg.COEFFICIENT)
 
-    simdi_bull = pmax_bull[-1]
+    # State değişkenleri (Pine'daki var string/int/bool ile aynı)
+    pozisyon    = 'YOK'
+    fake_sayac  = 0
+    esik_asildi = False
 
-    if mevcut_yon == 'LONG' and not simdi_bull:
-        log.info("PMAX BEAR'a döndü — LONG pozisyon kapatılacak")
-        return True
-    if mevcut_yon == 'SHORT' and simdi_bull:
-        log.info("PMAX BULL'a döndü — SHORT pozisyon kapatılacak")
-        return True
-    return False
-
-# ─────────────────────────────────────────────────────────────
-# ANA STRATEJİ FONKSİYONU
-# ─────────────────────────────────────────────────────────────
-
-def sinyal_uret(df: pd.DataFrame) -> dict | None:
-    if len(df) < cfg.ATR_PERIOD + cfg.PIVOT_RIGHT + cfg.PIVOT_LEFT + cfg.SINYAL_GECIKME + 10:
-        log.warning("Yeterli bar yok")
-        return None
-
-    close = df['close'].values
-    high  = df['high'].values
-    low   = df['low'].values
-    n     = len(close)
-    src   = (high + low) / 2  # Pine: src = hl2
-
-    atr               = hesapla_atr(high, low, close, cfg.ATR_PERIOD)
-    ma_tipi           = getattr(cfg, 'MA_TIPI', 'EMA')
-    ma                = _ma_hesapla(src, cfg.EMA_PERIOD, ma_tipi)
-    pmax_line, pmax_bull, direction = hesapla_pmax(src, ma, atr, cfg.COEFFICIENT)
-
+    # Pivot listesi — bar bar build edilecek (Pine'daki array.unshift + array.pop)
     ph = deque(maxlen=cfg.PIVOT_COUNT)
     pl = deque(maxlen=cfg.PIVOT_COUNT)
-    min_bar = cfg.ATR_PERIOD + cfg.PIVOT_RIGHT + cfg.PIVOT_LEFT
+
+    # Son bar için kayıt
+    son_sinyal       = None
+    zorla_ters       = False
+    son_trend_skoru  = 0.0
+    son_yapi_skoru   = 0.0
+    son_vol_skoru    = 0.0
+
+    fake_artma_barlari = []   # log için
+    zorla_ters_barlari = []   # log için
 
     for i in range(n):
-        if i < min_bar: continue
-        pb = i - cfg.PIVOT_RIGHT
-        if pb >= cfg.PIVOT_LEFT:
-            if pivot_yuksek_mi(high, pb, cfg.PIVOT_LEFT, cfg.PIVOT_RIGHT):
-                ph.appendleft(high[pb])
-            if pivot_alcak_mi(low, pb, cfg.PIVOT_LEFT, cfg.PIVOT_RIGHT):
-                pl.appendleft(low[pb])
+        # ─── Pivot tespit (i bar'ında, pb = i - PIVOT_RIGHT pivot konfirme olur)
+        if i >= cfg.PIVOT_RIGHT:
+            pb = i - cfg.PIVOT_RIGHT
+            if pb >= cfg.PIVOT_LEFT:
+                if pivot_yuksek_mi(high, pb, cfg.PIVOT_LEFT, cfg.PIVOT_RIGHT):
+                    ph.appendleft(high[pb])
+                if pivot_alcak_mi(low, pb, cfg.PIVOT_LEFT, cfg.PIVOT_RIGHT):
+                    pl.appendleft(low[pb])
 
-    ss = fiyat_yapisi_puani(list(ph), list(pl), pmax_bull[-1])
-    vs = volatilite_puani(atr[-1], close[-1])
-    trend_skoru = ss * 0.6 + vs * 0.4
+        # ─── PMAX yön & cross
+        is_bull = bool(pmax_bull[i])
+        is_bear = not is_bull
+        if i == 0:
+            bull_cross = False
+            bear_cross = False
+        else:
+            bull_cross = is_bull and not bool(pmax_bull[i-1])
+            bear_cross = is_bear and bool(pmax_bull[i-1])
 
-    log.info(f"Trend skoru: {trend_skoru:.1f}/100 "
-             f"(Yapı:{ss:.1f} Vol:{vs:.1f}) | "
-             f"PMAX: {'BULL' if pmax_bull[-1] else 'BEAR'} | "
-             f"ATR: {atr[-1]:.2f} | MA: {ma_tipi}({cfg.EMA_PERIOD}) | src=hl2")
+        # ─── Trend skoru (Pine'da her bar yeniden hesaplanıyor, yön'e göre)
+        yapi  = fiyat_yapisi_puani(list(ph), list(pl), is_bull)
+        vol   = volatilite_puani(atr[i], close[i])
+        skor  = yapi * 0.6 + vol * 0.4
+        aktif = skor >= cfg.SCORE_THRESH
 
-    if trend_skoru < cfg.SCORE_THRESH:
-        log.info(f"Trend skoru eşik altı ({trend_skoru:.1f} < {cfg.SCORE_THRESH}) — sinyal yok")
-        return None
+        # ─── Bu bar'ın çıktıları (sadece son bar için saklanacak)
+        bu_buy   = False
+        bu_sell  = False
+        bu_zorla = False
 
-    if pmax_bull[-1]:
-        yon         = 'LONG'
-        giris_fiyat = close[-1]
-        giris_atr   = atr[-1]
-        log.info(f"LONG sinyali — PMAX BULL | skor {trend_skoru:.1f}")
-    else:
-        yon         = 'SHORT'
-        giris_fiyat = close[-1]
-        giris_atr   = atr[-1]
-        log.info(f"SHORT sinyali — PMAX BEAR | skor {trend_skoru:.1f}")
+        # ─── State machine — Pine v6 mantığı birebir
+        if pozisyon == 'YOK':
+            fake_sayac  = 0
+            esik_asildi = False
+            if bull_cross and aktif:
+                pozisyon = 'LONG'
+                bu_buy   = True
+            elif bear_cross and aktif and not long_only:
+                pozisyon = 'SHORT'
+                bu_sell  = True
 
-    rejim = rejim_hesapla(close)
-    if (rejim, yon.lower()) in cfg.ELENEN_KOMBINASYONLAR:
-        log.info(f"Rejim filtresi: {rejim}+{yon} → elenmiş kombinasyon")
-        return None
+        elif pozisyon == 'LONG':
+            if is_bear:
+                if aktif or esik_asildi:
+                    bu_zorla    = esik_asildi and not aktif
+                    pozisyon    = 'SHORT'
+                    bu_sell     = True
+                    fake_sayac  = 0
+                    esik_asildi = False
+                elif bear_cross:
+                    fake_sayac += 1
+                    fake_artma_barlari.append(i)
+                    if fake_sayac >= cfg.FAKE_ESIK:
+                        esik_asildi = True
 
-    if yon == 'LONG':
-        sl = round(giris_fiyat - giris_atr * cfg.HARD_STOP_ATR, 4)
-        tp = round(giris_fiyat + giris_atr * cfg.KAR_AL_ATR, 4) if cfg.KAR_AL_ATR > 0 else None
-    else:
-        sl = round(giris_fiyat + giris_atr * cfg.HARD_STOP_ATR, 4)
-        tp = round(giris_fiyat - giris_atr * cfg.KAR_AL_ATR, 4) if cfg.KAR_AL_ATR > 0 else None
+        elif pozisyon == 'SHORT':
+            if is_bull:
+                if aktif or esik_asildi:
+                    bu_zorla    = esik_asildi and not aktif
+                    pozisyon    = 'LONG'
+                    bu_buy      = True
+                    fake_sayac  = 0
+                    esik_asildi = False
+                elif bull_cross:
+                    fake_sayac += 1
+                    fake_artma_barlari.append(i)
+                    if fake_sayac >= cfg.FAKE_ESIK:
+                        esik_asildi = True
 
-    trail_pct = round((giris_atr * cfg.TRAIL_STOP_ATR / giris_fiyat) * 100, 2)
+        if bu_zorla:
+            zorla_ters_barlari.append(i)
 
-    log.info(f"✅ SİNYAL: {yon} @ {giris_fiyat:.4f} | "
-             f"SL:{sl:.4f} | TP:{tp} | Trail:%{trail_pct} | "
-             f"Rejim:{rejim} | Skor:{trend_skoru:.1f}")
+        # Son bar ise sinyali sakla
+        if i == n - 1:
+            if bu_buy:
+                son_sinyal = 'AL'
+                zorla_ters = bu_zorla
+            elif bu_sell:
+                son_sinyal = 'SAT'
+                zorla_ters = bu_zorla
+            son_trend_skoru = skor
+            son_yapi_skoru  = yapi
+            son_vol_skoru   = vol
+
+    log.info(f"Geçmişte toplam {len(fake_artma_barlari)} fake artışı, "
+             f"{len(zorla_ters_barlari)} zorla ters dönüş tespit edildi")
 
     return {
-        'yon':          yon,
-        'fiyat':        giris_fiyat,
-        'atr':          giris_atr,
-        'sl':           sl,
-        'tp':           tp,
-        'trail_pct':    trail_pct,
-        'trend_skoru':  trend_skoru,
-        'rejim':        rejim,
+        'pozisyon':    pozisyon,
+        'fake_sayac':  fake_sayac,
+        'esik_asildi': esik_asildi,
+        'son_sinyal':  son_sinyal,
+        'zorla_ters':  zorla_ters,
+        'fiyat':       float(close[-1]),
+        'atr':         float(atr[-1]),
+        'trend_skoru': float(son_trend_skoru),
+        'pmax_yon':    'BULL' if pmax_bull[-1] else 'BEAR',
+        'yapi_skoru':  float(son_yapi_skoru),
+        'vol_skoru':   float(son_vol_skoru),
     }
