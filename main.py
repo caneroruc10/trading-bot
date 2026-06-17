@@ -97,6 +97,12 @@ def durum_raporu():
 🔧 ATR       : {atr[-1]:.4f}
 🏗 Yapı Skoru: {ss:.1f}
 ⚡ Vol Skoru : {vs:.1f}
+
+⚙️ <b>Parametreler</b>
+ATR Periyodu : {cfg.ATR_PERIOD}
+MA           : {ma_tipi}({cfg.EMA_PERIOD})
+Coefficient  : {cfg.COEFFICIENT}
+Skor Eşiği   : {cfg.SCORE_THRESH}
 {poz_metin}"""
 
         telegram.mesaj_gonder(metin)
