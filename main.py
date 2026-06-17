@@ -204,13 +204,15 @@ def baslangic():
 def main():
     baslangic()
 
-    schedule.every(5).minutes.do(kontrol_et)
+    # Saatlik bar kapanışından 5 dakika sonra kontrol et — veri kaynağının
+    # (Yahoo/Bitget) o saatlik barı finalize etmesi için güvenli pay
+    schedule.every().hour.at(":05").do(kontrol_et)
 
     for saat in ["00:05", "04:05", "08:05", "12:05", "16:05", "20:05"]:
         schedule.every().day.at(saat).do(durum_raporu)
 
     log.info("Scheduler aktif")
-    log.info("  Sinyal kontrolü: her 5 dakikada bir")
+    log.info("  Sinyal kontrolü: her saat :05'te (bar kapanışından 5dk sonra)")
     log.info("  Durum raporu: 00:05, 04:05, 08:05, 12:05, 16:05, 20:05")
 
     while True:
