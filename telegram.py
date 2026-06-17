@@ -5,7 +5,6 @@ Telegram Bildirim Modülü
 import logging
 import requests
 import config as cfg
-
 log = logging.getLogger(__name__)
 
 def mesaj_gonder(metin: str) -> bool:
@@ -34,14 +33,16 @@ def sinyal_bildirimi(sinyal: dict, basarili: bool) -> bool:
     emoji = '🟢' if sinyal['yon'] == 'LONG' else '🔴'
     durum = '✅ İşlem açıldı' if basarili else '❌ İşlem başarısız'
     test  = ' <b>[TEST]</b>' if cfg.TEST_MODU else ''
+    zorla = ('\n⚡ <b>ZORLA TERS DÖNÜŞ</b> (fake eşik aşıldı, skor yetersiz)'
+             if sinyal.get('zorla_ters') else '')
+    tp_metin = f"{sinyal['tp']:.2f}" if sinyal.get('tp') else 'Kapalı'
 
     metin = f"""{emoji} <b>{sinyal['yon']} {cfg.SEMBOL}</b>{test}
-{durum}
+{durum}{zorla}
 
 💰 Giriş   : <code>{sinyal['fiyat']:.2f}</code>
 🛑 Stop-L  : <code>{sinyal['sl']:.2f}</code>
-🎯 Take-P  : <code>{f"{sinyal['tp']:.2f}" if sinyal['tp'] else 'Kapalı'}</code>
-📊 Rejim   : {sinyal['rejim']}
+🎯 Take-P  : <code>{tp_metin}</code>
 📈 Skor    : {sinyal['trend_skoru']:.1f}/100
 """
     return mesaj_gonder(metin)
